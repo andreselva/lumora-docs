@@ -91,7 +91,7 @@ Veja o [ADR-009](/developers/adr/009-derived-photo-counters).
 
 ## Pontos de atenção
 
-Os itens abaixo são consequências deduzidas da leitura do código e da configuração. Nenhum foi reproduzido, e não há teste que os confirme ou descarte. Merecem verificação antes de serem tratados como fato.
+Os itens abaixo são consequências deduzidas da leitura do código e da configuração. Nenhum foi reproduzido, e não há teste que os confirme ou descarte. Merecem verificação antes de serem tratados como fato ou convertidos em tarefa de correção. Alguns descrevem premissas ou limites deliberados de uma decisão arquitetural, não necessariamente defeitos.
 
 ### Versão fixada e expiração de versões não correntes
 
@@ -107,9 +107,11 @@ Há também uma questão de integridade do original guardado: se a versão fixad
 
 Quando a reivindicação é recusada, o handler confirma a mensagem. Em uma fila standard, a mesma mensagem pode ser entregue a dois workers. Se o segundo confirmar a mensagem enquanto o primeiro ainda processa, e o primeiro falhar em seguida, pode não restar mensagem para repetir o trabalho. A foto ficaria em `PROCESSING` sem gatilho de retomada.
 
-### Relógio do lease
+### Premissa de relógio do lease
 
-O vencimento do lease é comparado com o relógio de cada invocação da Lambda. Diferenças de relógio entre ambientes de execução não são tratadas.
+O vencimento do lease é comparado com o relógio de cada invocação da Lambda. O protocolo pressupõe que diferenças entre esses relógios não sejam grandes o bastante para consumir a margem entre os tempos configurados.
+
+Não há evidência no repositório de que essa premissa esteja sendo violada. Portanto, este item não caracteriza um defeito atual do lease; é um ponto a validar se surgirem conclusões recusadas sem causa aparente ou se os tempos do processamento forem reduzidos.
 
 ### Lote de registro não atômico
 
