@@ -1,0 +1,43 @@
+---
+title: "ADR-002 — Cognito e JWT authorizer para o fotógrafo"
+description: "Identidade do fotógrafo no Cognito, validada pelo API Gateway, com o sub como identificador único."
+sidebarTitle: "002 — Cognito e JWT authorizer"
+---
+
+## Status
+
+Aceita. Origem: parte da decisão D8 do `README.md` do repositório `lumora`.
+
+## Contexto
+
+O Lumora precisa de cadastro, login, verificação de e-mail e renovação de sessão para fotógrafos. Implementar isso por conta própria traria armazenamento de senhas e gestão de tokens para dentro do sistema.
+
+A API precisa saber quem é o chamador em toda rota, de forma que esse dado não possa ser forjado pelo cliente.
+
+## Decisão
+
+- Usar um **Cognito User Pool**, com e-mail como login, para guardar credenciais e emitir tokens.
+- Validar o token no **JWT authorizer nativo** da HTTP API, antes de invocar a Lambda.
+- Exigir o **access token**, por meio do scope `aws.cognito.signin.user.admin`, em todas as rotas, exceto `GET /health`.
+- Usar o claim **`sub`** como identificador do fotógrafo em todo o backend, sem gerar um id próprio.
+- Criar o perfil da aplicação por um gatilho `PostConfirmation`, com um endpoint de bootstrap como reserva.
+
+## Consequências
+
+**Benefícios**
+
+- O backend não armazena senhas nem valida assinaturas de token.
+- Requisições não autenticadas são recusadas antes da Lambda, sem custo de invocação.
+- A identidade tem uma única origem. `getPhotographerId` é o único ponto do código que a lê.
+- O scope é declarado como padrão do authorizer e repetido em cada rota. Uma rota nova já nasce protegida, e o teste do template verifica as existentes.
+
+**Custos**
+
+- Acoplamento ao Cognito. O `sub` está em todas as chaves do DynamoDB e do S3; trocar de provedor de identidade exigiria migrar dados.
+- O perfil vive em dois lugares, Cognito e DynamoDB, sem sincronização após a criação.
+- A criação do perfil depende de um gatilho assíncrono em relação à aplicação, o que exigiu o caminho de reserva descrito em [Criação do perfil](/developers/flows/account-bootstrap).
+- O frontend depende do Amplify e do seu componente `Authenticator` para as telas de entrada.
+
+## O que esta decisão não cobre
+
+O `README.md` prevê, na mesma decisão D8, o acesso de clientes sem conta, por um token de galeria validado por um Lambda authorizer. Essa parte não está implementada e não faz parte deste ADR.

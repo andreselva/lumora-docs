@@ -1,0 +1,165 @@
+---
+title: "Solução de problemas"
+description: "Diagnóstico dos problemas mais prováveis em desenvolvimento e na operação da stack."
+---
+
+Esta página reúne problemas que decorrem do desenho atual do sistema. As causas foram levantadas a partir do código e da configuração; nem todas foram reproduzidas em uma stack real.
+
+## Fotos
+
+### Fotos paradas em `PENDING_UPLOAD`
+
+O original não chegou ao S3, ou o evento de criação não foi processado.
+
+| Causa provável | Como verificar |
+| --- | --- |
+| O envio foi interrompido no navegador | É o caso mais comum. Selecionar os mesmos arquivos de novo retoma. |
+| O envio ao S3 falhou por CORS | Erro de CORS no console do navegador. Confira o parâmetro `WebOrigin` da stack contra a origem do frontend. |
+| O objeto foi gravado por outro método | A notificação só cobre `ObjectCreated:Post`. Um `PutObject` ou uma cópia não dispara o processamento. |
+| A chave não segue o padrão | Procure o aviso `Parser da key incorreto` nos logs do processador. |
+
+Para saber se o original existe, verifique o objeto `photos/{sub}/{eventId}/{galleryId}/{photoId}/original.jpeg` no bucket.
+
+Não há limpeza automática. Fotos de lotes abandonados ficam em `PENDING_UPLOAD` indefinidamente.
+
+### Fotos paradas em `PROCESSING`
+
+A foto foi reivindicada e não foi concluída.
+
+1. Verifique a DLQ. Se houver mensagens, siga [Mensagens na DLQ](#mensagens-na-dlq).
+2. Procure a foto nos logs do `imageProcessor` pelo `photoId`. O campo `stage` indica onde a falha ocorreu.
+3. Aguarde. Uma falha transitória só é repetida depois do visibility timeout, de 6 minutos. Com 5 recebimentos, uma foto pode levar cerca de meia hora até chegar à DLQ.
+
+### Fotos em `FAILED`
+
+O conteúdo foi rejeitado. Procure o aviso `Foto rejeitada por conteúdo inválido` com o `photoId`. O `errorMessage` informa o motivo:
+
+| Mensagem | Causa |
+| --- | --- |
+| `expected N bytes, received M` | O objeto no S3 tem tamanho diferente do registrado. |
+| `expected image/jpeg, received ...` | O `Content-Type` do objeto difere do registrado. |
+| `expected JPEG, received ...` | O arquivo tem extensão de JPEG, mas outro formato. |
+| `unreadable or corrupt JPEG` | O sharp não conseguiu ler o arquivo. |
+| `JPEG cannot be processed safely` | O sharp falhou ao redimensionar, por exemplo por exceder o limite de pixels. |
+
+Não há reprocessamento para fotos em `FAILED`. Uma nova mensagem para a mesma foto é recusada na reivindicação.
+
+### Erro `Photo processing transition condition failed`
+
+A conclusão de uma tentativa foi recusada. Significa que, no momento da conclusão, a foto não estava mais em `PROCESSING` com aquela tentativa, aquela versão e lease válido.
+
+Causas possíveis:
+
+- o lease de 90 segundos venceu antes da conclusão;
+- outra tentativa assumiu e concluiu;
+- o item foi alterado fora do fluxo.
+
+A mensagem volta para a fila. Na reentrega, a reivindicação é recusada se a foto já foi concluída, ou aceita se o lease venceu. Erros isolados desse tipo são o mecanismo de proteção funcionando. Erros frequentes indicam que o processamento está próximo do limite de tempo.
+
+### Mensagens na DLQ
+
+O alarme `PhotoProcessingDlqAlarm` dispara com uma mensagem visível na DLQ. Cada mensagem corresponde a uma foto parada em `PROCESSING`.
+
+<Steps>
+  <Step title="Identifique a foto">
+    Leia a mensagem na DLQ. O corpo é um evento do S3, e a chave do objeto contém os ids do evento, da galeria e da foto.
+  </Step>
+  <Step title="Encontre a causa">
+    Consulte os logs do `imageProcessor` pelo `photoId`. Veja as [consultas úteis](/developers/operations/observability#consultas-úteis).
+  </Step>
+  <Step title="Corrija a causa">
+    Uma falha de permissão, de configuração ou um defeito de código precisa ser corrigido antes do redrive. Caso contrário as mensagens voltam para a DLQ.
+  </Step>
+  <Step title="Faça o redrive">
+    Mova as mensagens da DLQ de volta para a fila principal, pelo console do SQS ou pela AWS CLI. O processador retoma a mesma versão do original.
+  </Step>
+</Steps>
+
+A DLQ retém mensagens por 14 dias. Depois disso a mensagem se perde, e a foto permanece em `PROCESSING` sem nenhum gatilho que a retome.
+
+### Miniaturas quebradas na galeria
+
+A API gera uma URL assinada de miniatura para toda foto listada, inclusive as que ainda não têm miniatura. Para fotos em `PENDING_UPLOAD`, `PROCESSING` ou `FAILED`, o S3 recusa a URL e o navegador mostra a imagem como quebrada.
+
+É uma limitação conhecida. Veja [Limitações](/developers/limitations#limitações-atuais).
+
+As URLs valem por 10 minutos. Uma grade aberta por mais tempo pode ter imagens que deixam de carregar até a lista ser buscada de novo.
+
+## Upload
+
+### O S3 responde 403 ao envio
+
+| Causa | Observação |
+| --- | --- |
+| Ticket expirado | Validade de 15 minutos. O `UploadManager` pede um novo ticket uma vez. |
+| Tamanho diferente do declarado | A policy exige o tamanho exato informado no registro. |
+| `Content-Type` diferente do declarado | A policy exige o tipo exato. |
+| Campos do formulário fora de ordem | O arquivo deve ser o último campo. |
+
+### A API responde 400 ao pedir tickets
+
+O lote inteiro é recusado quando um arquivo viola o contrato. O `details.fields` da resposta aponta o item, por exemplo `files.3.size`.
+
+O frontend filtra os arquivos antes de pedir tickets. Um 400 nessa rota indica que o filtro de `photoFiles.ts` e o contrato divergiram.
+
+### A API responde 409 `CONFLICT`
+
+Uma transação foi cancelada por conflito com outra, mesmo depois de 3 repetições. Nada foi gravado. Repetir a requisição é seguro.
+
+## API e autenticação
+
+### 401 em todas as rotas
+
+- Confira `VITE_COGNITO_USER_POOL_ID` e `VITE_COGNITO_USER_POOL_CLIENT_ID`. Elas precisam ser da mesma stack que `VITE_API_URL`.
+- O authorizer valida o emissor e o client. Um token de outro pool é recusado.
+- Se as variáveis do Cognito estiverem vazias, o Amplify não é configurado.
+
+### 403 com token válido
+
+O authorizer exige o scope `aws.cognito.signin.user.admin`, presente no access token. Enviar o id token resulta em recusa.
+
+### 404 em uma rota que existe no código
+
+Uma rota precisa estar em dois lugares: no `switch` de `studioApi.ts` e nos `Events` da função no template. Faltando no template, o API Gateway responde 404 sem invocar a Lambda. Faltando no `switch`, a Lambda responde 404 `Rota não encontrada`.
+
+### 404 em um recurso que existe
+
+O recurso pertence a outro fotógrafo, ou o id tem formato inválido. As duas situações respondem como recurso inexistente, por desenho.
+
+### `GET /me` responde 404
+
+O usuário existe no Cognito, mas não tem perfil no DynamoDB. A página **Minha conta** chama `POST /me/bootstrap` automaticamente. Veja [Criação do perfil](/developers/flows/account-bootstrap).
+
+## Exclusões
+
+### A tela não deixa excluir um evento
+
+`DeleteEventDialog` bloqueia a exclusão quando `galleryCount` é maior que 0. Todo evento atual tem `galleryCount` igual a 1. Veja [Limitações](/developers/limitations#limitações-atuais).
+
+A API aceita a exclusão de um evento que tenha só a galeria principal e nenhuma foto registrada.
+
+### A exclusão de fotos falha
+
+A tela chama `POST .../photos/delete`, rota que não existe na API. Com a API real, a chamada falha. Com o MSW ligado, um handler fictício responde com sucesso.
+
+## Desenvolvimento
+
+### Os testes recusam a versão do Node
+
+`pretest` executa `scripts/check-node-version.mjs`, que exige a versão exata do `.nvmrc`. Execute `nvm use`.
+
+### `pnpm test:dynamodb` falha ao conectar
+
+O DynamoDB Local não está no ar, ou a tabela não foi criada. Execute `docker compose up -d dynamodb` e `pnpm dynamodb:setup`. O banco é em memória: reiniciar o contêiner exige criar a tabela de novo.
+
+### Um teste de paridade de contrato falha
+
+As duas cópias de um contrato divergiram. Alinhe `packages/contracts/src` e `services/api/src/contracts`. Veja [Backend](/developers/architecture/backend#contratos).
+
+### O frontend mostra dados que não existem na API
+
+O MSW está ligado. Confira `VITE_ENABLE_MSW` e reinicie o Vite.
+
+### O `imageProcessor` falha ao carregar o sharp
+
+O sharp vem da `SharpLayer`, compilado para linux arm64. Confira se a versão no `Makefile` da layer é igual à de `services/api/package.json` e se a função continua em arm64.

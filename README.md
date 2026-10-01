@@ -1,55 +1,59 @@
-# Mintlify Starter Kit
+# Documentação do Lumora
 
-Use the starter kit to get your docs deployed and ready to customize.
+Documentação oficial do Lumora, publicada com [Mintlify](https://mintlify.com). O código-fonte do produto fica no repositório `lumora`.
 
-Click the green **Use this template** button at the top of this repo to copy the Mintlify starter kit. The starter kit contains examples with
+A documentação tem dois públicos, em duas abas separadas:
 
-- Guide pages
-- Navigation
-- Customizations
-- API reference pages
-- Use of popular components
+| Aba | Pasta | Público | Conteúdo |
+| --- | --- | --- | --- |
+| Guia do usuário | `user/` | Fotógrafos | Como usar o produto. Só funcionalidades disponíveis, sem detalhes internos. |
+| Desenvolvedores | `developers/` | Quem mantém o Lumora | Arquitetura, fluxos, modelo de dados, ADRs, operação e limitações. |
 
-**[Follow the full quickstart guide](https://starter.mintlify.com/quickstart)**
+## Estrutura
 
-## AI-assisted writing
+```
+docs.json                 navegação e identidade visual
+user/                     guia do usuário
+developers/
+├── index.mdx             ponto de partida
+├── limitations.mdx       limitações, pontos futuros e divergências do README
+├── architecture/         visão geral, frontend, backend, infraestrutura, modelo de dados
+├── flows/                autenticação, perfil, eventos e galerias, upload, processamento
+├── adr/                  decisões arquiteturais
+└── operations/           desenvolvimento local, implantação, observabilidade, problemas
+```
 
-Set up your AI coding tool to work with Mintlify:
+## Princípios
+
+- O **código** explica como algo foi implementado. A **documentação** explica como o sistema funciona. O **ADR** explica por que uma decisão foi tomada.
+- O repositório `lumora` é a fonte de verdade. Em caso de divergência, o código prevalece e a página deve ser corrigida.
+- Documente o sistema atual. O que é planejado fica identificado como planejado, em `developers/limitations.mdx`.
+- Não registre segredos, tokens, ids de conta AWS, ids de recursos reais nem dados de usuários.
+
+As regras de escrita estão em `AGENTS.md`.
+
+## Pré-visualizar
+
+Instale a CLI do Mintlify e execute na raiz do repositório:
 
 ```bash
-npx skills add https://mintlify.com/docs
-```
-
-This command installs Mintlify's documentation skill for your configured AI tools like Claude Code, Cursor, Windsurf, and others. The skill includes component reference, writing standards, and workflow guidance.
-
-See the [AI tools guides](/ai-tools) for tool-specific setup.
-
-## Development
-
-Install the [Mintlify CLI](https://www.npmjs.com/package/mint) to preview your documentation changes locally. To install, use the following command:
-
-```
 npm i -g mint
-```
-
-Run the following command at the root of your documentation, where your `docs.json` is located:
-
-```
 mint dev
 ```
 
-View your local preview at `http://localhost:3000`.
+A pré-visualização fica em `http://localhost:3000`.
 
-## Publishing changes
+## Validar
 
-Install our GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app) to propagate changes from your repo to your deployment. Changes are deployed to production automatically after pushing to the default branch.
+```bash
+mint validate
+mint broken-links
+```
 
-## Need help?
+Execute os dois comandos antes de abrir um pull request.
 
-### Troubleshooting
+## Adicionar uma página
 
-- If your dev environment isn't running: Run `mint update` to ensure you have the most recent version of the CLI.
-- If a page loads as a 404: Make sure you are running in a folder with a valid `docs.json`.
-
-### Resources
-- [Mintlify documentation](https://mintlify.com/docs)
+1. Crie o arquivo `.mdx` na pasta correspondente, com `title` e `description` no frontmatter.
+2. Adicione o caminho ao grupo adequado em `docs.json`.
+3. Para um ADR, siga as instruções de `developers/adr/index.mdx`.

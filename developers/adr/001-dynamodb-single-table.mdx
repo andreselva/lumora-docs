@@ -1,0 +1,56 @@
+---
+title: "ADR-001 — DynamoDB em tabela única, com o dono na chave"
+description: "Todos os metadados em uma tabela DynamoDB, com o sub do fotógrafo nas chaves de partição."
+sidebarTitle: "001 — Tabela única no DynamoDB"
+---
+
+## Status
+
+Aceita. Origem: decisão D2 do `README.md` do repositório `lumora`.
+
+## Contexto
+
+O Lumora roda inteiramente em Lambda. Um banco relacional exigiria gerenciar conexões a partir de funções efêmeras, o problema clássico dessa combinação.
+
+Os dados têm forma hierárquica e os acessos são conhecidos de antemão: um fotógrafo tem eventos, um evento tem galerias, uma galeria tem fotos. Não há necessidade atual de consultas ad hoc.
+
+O domínio precisa de duas primitivas: escrita condicional, para idempotência e transições de estado, e transações, para invariantes que envolvem mais de um item.
+
+Além disso, o sistema é multi-inquilino. Um fotógrafo nunca pode alcançar dados de outro, e essa garantia não deveria depender de cada rota lembrar de verificar.
+
+## Decisão
+
+Usar uma única tabela DynamoDB, `lumora-app`, com chaves genéricas `PK` e `SK`.
+
+Há duas famílias de partição:
+
+- `USER#{sub}`, com o perfil e os eventos do fotógrafo;
+- `USER#{sub}#EVENT#{eventId}`, com as galerias, fotos e fingerprints de um evento.
+
+O `sub` do Cognito faz parte de toda chave. A partição do evento carrega o dono explicitamente.
+
+## Consequências
+
+**Benefícios**
+
+- Isolamento por construção. Sem o `sub`, não há como endereçar um evento, uma galeria ou uma foto. Um id de outro fotógrafo resulta em item não encontrado.
+- Cada partição corresponde a um agregado. Listar as fotos de uma galeria ou contar as fotos de um evento é uma `Query` em uma única partição.
+- Escritas condicionais e transações cobrem as invariantes: evento com galeria principal, registro único por fingerprint, exclusão só de evento vazio.
+- Sem conexões a gerenciar e sem capacidade a provisionar.
+
+**Custos**
+
+- Não há consultas ad hoc nem relatórios livres. Qualquer novo padrão de acesso precisa ser desenhado nas chaves ou em um índice.
+- O modelo é menos legível que tabelas relacionais. As chaves precisam de documentação, em [Modelo de dados](/developers/architecture/data-model).
+- Todas as fotos de um evento ficam em uma partição. Contagens por estado custam proporcionalmente ao número de fotos. Veja o [ADR-009](/developers/adr/009-derived-photo-counters).
+- Mudar o formato de uma chave exige migrar dados. O código já carrega tolerâncias a formatos anteriores.
+
+## Diferenças em relação ao `README.md`
+
+- O `README.md` descreve capacidade provisionada. O template usa capacidade sob demanda (`PAY_PER_REQUEST`), e o teste `scripts/infra-template.test.ts` verifica isso.
+- O `README.md` atribui ao `GSI1` a consulta de pedidos por fotógrafo e prevê um `GSI2`. O `GSI1` está declarado, mas sem uso, e o `GSI2` não existe. Pedidos não estão implementados.
+- O `README.md` lista padrões de chave para tokens de galeria, seleção, pedidos e webhooks. Nenhum deles existe no código.
+
+## Alternativas
+
+O `README.md` registra que um banco relacional (Aurora) seria reavaliado caso surjam relatórios financeiros complexos ou consultas relacionais frequentes.

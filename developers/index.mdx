@@ -1,0 +1,81 @@
+---
+title: "Documentação para desenvolvedores"
+description: "Arquitetura, fluxos, modelo de dados, decisões e operação do Lumora."
+---
+
+Esta área explica como o Lumora funciona por dentro. O objetivo é que você entenda a arquitetura antes de abrir o código, e saiba onde olhar quando abrir.
+
+O código-fonte fica no repositório `lumora`, um monorepo pnpm. Esta documentação fica no repositório `lumora-docs`.
+
+## Como esta documentação se relaciona com o código
+
+- O **código** explica como algo foi implementado.
+- Esta **documentação** explica como o sistema funciona: responsabilidades, fluxos, garantias e limites.
+- Os **ADRs** explicam por que uma decisão arquitetural foi tomada.
+
+Quando esta documentação e o código divergirem, o código prevalece. Corrija a página.
+
+<Warning>
+  O `README.md` do repositório `lumora` descreve em parte a arquitetura pretendida, e não só a implementada. Ele cita, por exemplo, três buckets, CloudFront, marca d'água e capacidade provisionada, que não existem no código atual. Esta documentação descreve o estado implementado. As diferenças conhecidas estão em [Limitações e pontos futuros](/developers/limitations#divergências-entre-o-readme-e-o-código).
+</Warning>
+
+## O que está implementado hoje
+
+| Área | Estado |
+| --- | --- |
+| Cadastro e sessão do fotógrafo (Cognito) | Implementado |
+| Perfil do fotógrafo (`/me`, bootstrap) | Implementado |
+| Eventos: criar, listar, ler, editar | Implementado |
+| Eventos: excluir | Implementado na API; bloqueado pela tela atual |
+| Eventos: publicar e arquivar | Presente no domínio e no repositório; sem rota e sem tela |
+| Galerias: criar, listar, ler, renomear | Implementado |
+| Galerias: excluir | Implementado na API; sem tela |
+| Upload de fotos direto para o S3 | Implementado |
+| Processamento assíncrono (thumbnail e preview) | Implementado |
+| Acompanhamento do processamento | Implementado, por polling |
+| Exclusão de fotos | Tela implementada; rota ausente na API |
+| Galeria do cliente (`/g/:token`) | Apenas a casca de rotas no frontend |
+| Seleção, pedidos, pagamento, entrega | Não implementado |
+
+## Por onde começar
+
+<CardGroup cols={2}>
+  <Card title="Visão geral" icon="sitemap" href="/developers/architecture/overview">
+    Componentes do sistema e como eles se relacionam.
+  </Card>
+  <Card title="Modelo de dados" icon="table" href="/developers/architecture/data-model">
+    A tabela única do DynamoDB, suas chaves e padrões de acesso.
+  </Card>
+  <Card title="Upload de fotos" icon="upload" href="/developers/flows/photo-upload">
+    Do navegador ao S3, com retomada e idempotência.
+  </Card>
+  <Card title="Processamento de imagens" icon="gears" href="/developers/flows/image-processing">
+    Fila, retry, lease e proteção contra workers atrasados.
+  </Card>
+  <Card title="Decisões arquiteturais" icon="scale-balanced" href="/developers/adr/index">
+    O que foi decidido e por quê.
+  </Card>
+  <Card title="Limitações e pontos futuros" icon="triangle-exclamation" href="/developers/limitations">
+    O que foi deixado para depois, de forma consciente ou não.
+  </Card>
+</CardGroup>
+
+## Mapa do repositório `lumora`
+
+| Caminho | Conteúdo |
+| --- | --- |
+| `apps/web` | Frontend React (Vite). Área do fotógrafo em `/app/*`. |
+| `services/api` | Código das três funções Lambda: handlers, casos de uso, domínio e repositórios. |
+| `packages/contracts` | Schemas zod dos contratos HTTP, consumidos pelo frontend. |
+| `packages/domain` | `Money`, `OrderStatus`, `PhotoStatus` e geração de IDs. Hoje não é importado pelo backend nem pelo frontend. |
+| `infra/template.yaml` | Toda a infraestrutura AWS, em AWS SAM. |
+| `infra/layers/sharp` | Layer com o binário nativo do sharp para Lambda arm64. |
+| `scripts` | DynamoDB Local, criação de usuário de teste e testes de paridade e de infraestrutura. |
+| `docs` | Notas internas: design system, guia de integridade, revisões pontuais. |
+
+## Convenções desta documentação
+
+- Identificadores do código aparecem em inglês e sem tradução, como `PENDING_UPLOAD` e `processingAttemptId`.
+- Caminhos de arquivo são relativos à raiz do repositório `lumora`.
+- "Atualmente" e "hoje" marcam comportamento implementado. "Consideração futura" e "planejado" marcam o que ainda não existe.
+- Exemplos de chaves e identificadores são fictícios.

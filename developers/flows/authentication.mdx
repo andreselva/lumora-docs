@@ -1,0 +1,120 @@
+---
+title: "Autenticação"
+description: "Como o fotógrafo entra, como o token chega à API e de onde vem a identidade usada em cada operação."
+---
+
+## Objetivo
+
+Identificar o fotógrafo em cada requisição e garantir que ele só alcance os próprios dados.
+
+## Componentes
+
+| Componente | Papel |
+| --- | --- |
+| Cognito User Pool | Guarda as credenciais e emite os tokens. |
+| Amplify, no navegador | Conduz cadastro e login, guarda e renova a sessão. |
+| JWT authorizer do API Gateway | Valida o token antes de invocar a Lambda. |
+| `getPhotographerId` | Extrai o `sub` das claims já validadas. |
+
+## Sequência
+
+```mermaid
+sequenceDiagram
+  participant U as Fotógrafo
+  participant B as Navegador (Amplify)
+  participant C as Cognito
+  participant G as API Gateway
+  participant A as studio-api
+
+  U->>B: e-mail e senha
+  B->>C: autenticação SRP
+  C-->>B: id, access e refresh tokens
+  Note over B: sessão guardada pelo Amplify
+
+  B->>B: fetchAuthSession()
+  B->>G: Authorization: Bearer access token
+  G->>G: valida assinatura, emissor, client e scope
+  alt token inválido ou ausente
+    G-->>B: 401, sem invocar a Lambda
+  else token válido
+    G->>A: evento com jwt.claims
+    A->>A: sub = claims.sub
+    A-->>B: resposta
+  end
+```
+
+### Entrada
+
+`studio/StudioRoutes.tsx` envolve todas as rotas do Studio no componente `Authenticator`. Sem sessão, ele mostra as telas de entrada e cadastro. O cadastro pede e-mail, senha e o atributo `name`.
+
+O login usa o fluxo SRP: a senha não trafega em texto para o Cognito. O App Client não tem secret.
+
+### Envio do token
+
+`studio/api.ts` chama `fetchAuthSession()` antes de cada requisição e envia o **access token** no header `Authorization`. O Amplify renova o token com o refresh token quando necessário.
+
+Se não houver token, a requisição nem é feita: o cliente lança `ApiError` 401 `UNAUTHENTICATED`.
+
+### Validação no API Gateway
+
+O authorizer confere:
+
+- a assinatura e a validade do token;
+- o emissor, que deve ser o User Pool da stack;
+- o client, que deve ser o App Client da stack;
+- o scope `aws.cognito.signin.user.admin`.
+
+A exigência do scope tem um efeito prático: só o access token é aceito. O id token do Cognito não carrega esse scope e é recusado.
+
+Uma requisição recusada pelo authorizer não chega à Lambda e não aparece nos logs da `studio-api`.
+
+### Identidade na Lambda
+
+`auth/getPhotographerId.ts` lê `requestContext.authorizer.jwt.claims.sub`. Se o claim faltar, lança `UnauthenticatedError`, que vira 401.
+
+Esse `sub` é o único identificador de fotógrafo que o backend usa. Ele é passado a cada caso de uso e entra nas chaves do DynamoDB.
+
+## Autorização
+
+O Lumora não tem papéis nem permissões. A regra é uma só: o fotógrafo acessa o que está sob o próprio `sub`.
+
+A regra é aplicada pelo modelo de dados, não por verificações espalhadas:
+
+- o `sub` nunca vem de path, query, body ou cursor;
+- toda chave de evento, galeria e foto contém o `sub`;
+- um id de recurso de outro fotógrafo leva a uma chave inexistente, e a resposta é 404.
+
+Responder 404, e não 403, evita revelar que o recurso existe.
+
+O teste `studioApi.isolation.dynamodb.spec.ts` exercita esse isolamento contra o DynamoDB Local, com dois fotógrafos.
+
+## Sessão no frontend
+
+O frontend trata a troca de usuário no mesmo navegador como um risco:
+
+- todas as query keys incluem o `sub`;
+- `useMe` recusa uma resposta de `/me` cujo `id` seja diferente do `sub` da sessão;
+- `useBootstrapMe` confere o usuário ativo de novo antes de gravar o resultado no cache;
+- o logout cancela as queries, encerra a sessão, limpa o cache e descarta as filas de upload.
+
+## Saída
+
+`signOut()` do Amplify encerra a sessão local. O App Client tem revogação de tokens habilitada.
+
+## Falhas
+
+| Situação | Resultado |
+| --- | --- |
+| Token ausente, expirado ou de outro pool | 401 do API Gateway |
+| Token sem o scope exigido | 403 do API Gateway |
+| Claim `sub` ausente na Lambda | 401 `UNAUTHENTICATED` |
+| Sessão local ausente | `ApiError` 401, sem requisição |
+
+<Note>
+  Os dois primeiros status são o comportamento padrão do JWT authorizer do API Gateway. O código do Lumora não os define nem os testa.
+</Note>
+
+## O que não está implementado
+
+- **Acesso do cliente por token de galeria.** O frontend tem a rota `/g/:token` e um contexto para o token, e o CORS da API libera o header `x-gallery-token`. Não há authorizer, rota nem tabela de tokens.
+- **Login social, MFA e recuperação de conta personalizada.** O User Pool usa a configuração básica.

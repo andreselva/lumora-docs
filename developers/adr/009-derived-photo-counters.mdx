@@ -1,0 +1,50 @@
+---
+title: "ADR-009 — Contadores de fotos derivados na leitura"
+description: "O progresso do processamento é contado a partir do estado das fotos, sem contadores armazenados no evento."
+sidebarTitle: "009 — Contadores derivados"
+---
+
+## Status
+
+Aceita. Origem: decisão D10 do `README.md` do repositório `lumora`, regra "Contadores".
+
+## Contexto
+
+A tela mostra quantas fotos de um evento estão aguardando arquivo, em processamento, prontas e com falha.
+
+A forma direta de servir esses números é manter contadores no item do evento, atualizados a cada transição. Isso tem dois problemas:
+
+- **Consistência.** Estado e contador são duas escritas. Para não divergirem, cada transição precisaria de uma transação entre a foto e o evento, ou aceitaria uma janela em que um mudou e o outro não.
+- **Contenção.** Com até 30 workers concluindo fotos do mesmo evento em paralelo, todos escreveriam no mesmo item.
+
+O código guarda vestígios de um modelo anterior com contadores: os atributos `photoCount` e `pendingPhotoCount` ainda aparecem nas condições de exclusão do evento.
+
+## Decisão
+
+Separar dois tipos de contador.
+
+**Contadores de progresso são derivados.** O resumo de upload e o `photoCount` devolvido pela API são calculados na leitura, com uma `Query` consistente e paginada sobre os itens `PHOTO#` do evento, projetando apenas `status`. O processador não escreve no evento.
+
+**Contadores de invariante são armazenados.** `galleryCount` e `registeredPhotoCount` ficam no item do evento e são atualizados na mesma transação da escrita que contam. Eles existem para condicionar a exclusão do evento, e não para medir progresso.
+
+## Consequências
+
+**Benefícios**
+
+- Cada foto conta exatamente uma vez. Não há como o número divergir do estado real.
+- Cada transição do processamento é um único `UpdateItem`, sem transação e sem disputa pelo item do evento.
+- Não há contador a corrigir depois de uma falha, nem necessidade de backfill.
+
+**Custos**
+
+- O custo da leitura cresce com o número de fotos. Um evento com milhares de fotos exige várias páginas a cada consulta.
+- O resumo é consultado a cada 5 segundos durante um envio. O custo se multiplica pelo número de consultas.
+- `GET /events` calcula o `photoCount` de cada evento da página. Uma página de 20 eventos dispara ao menos 20 consultas adicionais.
+- As páginas de uma contagem não formam um retrato único no tempo. Uma foto que muda de estado durante a leitura pode ser contada no estado antigo ou no novo. A consulta seguinte corrige.
+- `registeredPhotoCount` só aumenta. Como não há exclusão de fotos, um evento que já recebeu uma foto não volta a ser excluível.
+
+## Alternativas
+
+O `README.md` registra a alternativa descartada: contadores no evento com `ADD` a cada transição, com "janela de falha entre estado e contador".
+
+Uma contagem por índice ou por agregados incrementais não está registrada no repositório. Fica como consideração futura caso o custo da leitura se torne relevante.

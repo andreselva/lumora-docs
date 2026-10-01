@@ -1,0 +1,52 @@
+---
+title: "ADR-004 — Portas e repositórios entre domínio e infraestrutura"
+description: "O domínio define interfaces de persistência e armazenamento; DynamoDB e S3 ficam em implementações isoladas."
+sidebarTitle: "004 — Portas e repositórios"
+---
+
+## Status
+
+Aceita. Origem: regra da decisão D5 do `README.md` do repositório `lumora` ("handlers são adaptadores finos") e a estrutura de `services/api/src`.
+
+## Contexto
+
+As regras do Lumora, como a máquina de estados do evento, a validação de uma foto e as condições de processamento, precisam ser testáveis sem AWS.
+
+As operações de persistência não são triviais: usam transações, escritas condicionais e inspeção do item devolvido em caso de falha. Espalhar esse código pelos casos de uso misturaria regra de negócio com detalhes do SDK.
+
+## Decisão
+
+Separar o backend em camadas com dependência em um só sentido:
+
+- o **domínio** (`src/domain`) contém entidades, erros e as interfaces dos repositórios;
+- a **aplicação** (`src/application`) contém os casos de uso, que recebem as interfaces pelo construtor;
+- a **infraestrutura** (`src/repositories`) implementa as interfaces sobre DynamoDB e S3;
+- os **handlers** instanciam as implementações e as entregam aos casos de uso.
+
+As interfaces expressam intenções do domínio, e não operações do banco. `PhotoRepository` tem `register`, `claimProcessing` e `markAvailable`, e não `put` ou `update`.
+
+## Consequências
+
+**Benefícios**
+
+- Os casos de uso são testados com repositórios falsos em memória, sem Docker e sem rede.
+- A complexidade das expressões condicionais fica concentrada em poucos arquivos.
+- As semânticas de concorrência são documentadas na própria interface. `PhotoRepository` descreve em comentários o que cada método garante.
+- Erros do DynamoDB são convertidos em erros de domínio dentro do repositório.
+
+**Custos**
+
+- Mais arquivos e indireção para operações simples. Vários casos de uso apenas repassam a chamada.
+- Regras duplicadas. As condições de `publish` e `archive` existem na entidade `Event` e de novo nas `ConditionExpression` do repositório, porque a escrita condicional precisa conhecer a regra.
+- A semântica real de uma operação está na implementação. Um repositório falso que não reproduza as condições pode fazer um teste passar indevidamente. Por isso existem os testes de integração `*.dynamodb.spec.ts`.
+
+## Limites atuais
+
+A separação não é completa:
+
+- `IPhotoStorage` está em `src/contracts/photo`, e não em `src/domain`.
+- As rotas `/me` e `/me/bootstrap` e o handler `postConfirmation` tratam uma exceção do SDK do DynamoDB diretamente.
+- `ProcessUploadedPhoto` chama `SharpProcessor` e `S3KeyBuilder` como classes estáticas, sem porta.
+- As entidades importam `luxon` e `node:crypto`.
+
+O `README.md` afirma que casos de uso e regras ficam em `packages/domain`. No código, eles ficam em `services/api/src`. O pacote `packages/domain` contém apenas `Money`, dois enums e a geração de ids, e não é importado pelo backend.

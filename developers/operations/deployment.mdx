@@ -1,0 +1,100 @@
+---
+title: "Implantação"
+description: "Como a stack do Lumora é construída e publicada com AWS SAM, e o que ainda não está automatizado."
+---
+
+A infraestrutura e o backend são publicados juntos, com AWS SAM, a partir de `infra/template.yaml`. O `infra/samconfig.toml` guarda os parâmetros de cada ambiente.
+
+## Ambientes
+
+Atualmente há um único ambiente configurado, `dev`:
+
+| Parâmetro | Valor |
+| --- | --- |
+| Nome da stack | `lumora-dev` |
+| Região | `us-east-1` |
+| Perfil AWS | `lumora-dev` |
+| Confirmação do changeset | Exigida a cada deploy |
+
+<Note>
+  Não há ambiente de produção no `samconfig.toml`, e não há pipeline de deploy. A publicação é manual, a partir da máquina do desenvolvedor.
+</Note>
+
+## Publicar
+
+Execute os comandos a partir da pasta `infra`:
+
+```bash
+sam validate --lint
+sam build
+sam deploy --config-env dev
+```
+
+| Comando | O que faz |
+| --- | --- |
+| `sam validate --lint` | Valida o template. |
+| `sam build` | Empacota as três funções com o esbuild e constrói a layer do sharp. |
+| `sam deploy` | Cria um changeset no CloudFormation, pede confirmação e aplica. |
+
+### O que o build faz
+
+Cada função tem um `Metadata` com `BuildMethod: esbuild`, que gera um bundle minificado, com sourcemap, a partir do seu handler. `UseNpmCi` faz o SAM instalar as dependências com `npm ci` em `services/api`.
+
+O esbuild precisa estar no `PATH`. O CI acrescenta `services/api/node_modules/.bin` ao `PATH` antes do build.
+
+A `SharpLayer` é construída pelo `Makefile` em `infra/layers/sharp`, que instala o sharp para linux arm64. O `imageProcessor` declara o sharp como `External`, de modo que ele fica fora do bundle e vem da layer.
+
+## Desenvolver contra a stack
+
+```bash
+pnpm dev:cloud
+```
+
+Equivale a `sam sync --watch --config-env dev`. O SAM observa os arquivos e publica as mudanças na stack `dev` sem um deploy completo.
+
+## Depois do primeiro deploy
+
+1. Copie as saídas `ApiUrl`, `UserPoolId` e `UserPoolClientId` para `apps/web/.env.development`.
+2. Assine o tópico SNS da saída `PhotoProcessingAlarmTopicArn` para receber o alarme da DLQ. O template não cria assinatura.
+3. Crie um usuário, pela tela de cadastro ou com `pnpm create:test-user`.
+
+## Parâmetro `WebOrigin`
+
+O template tem o parâmetro `WebOrigin`, com valor padrão `http://localhost:5173`. Ele define a origem aceita pelo CORS do bucket de fotos.
+
+O `samconfig.toml` não sobrescreve esse parâmetro. A stack `dev` aceita uploads apenas a partir do servidor de desenvolvimento local. Para publicar o frontend em outro endereço, informe o parâmetro no deploy.
+
+## Ordem de publicação de mudanças no fluxo de fotos
+
+A `studio-api` e o `imageProcessor` compartilham o formato do item de foto no DynamoDB. Uma mudança nesse formato precisa das duas funções atualizadas.
+
+O `README.md` do repositório `lumora` registra a regra para esse caso:
+
+- publique as duas funções de forma coordenada;
+- não misture escritores antigos e novos nem reverta apenas uma delas;
+- aguarde as invocações antigas terminarem, ao menos o timeout de 60 segundos do processador, antes de aceitar novos uploads.
+
+Como as três funções saem do mesmo template, um `sam deploy` atualiza todas no mesmo changeset.
+
+## Frontend
+
+O repositório não define como o frontend é publicado. `pnpm --filter @photos/web build` gera os arquivos estáticos em `apps/web/dist`, e o CI executa esse build, mas não há bucket de site, distribuição nem etapa de publicação.
+
+## Integração contínua
+
+`.github/workflows/ci.yml` executa, em cada push para `main` e em cada pull request:
+
+| Job | Etapas |
+| --- | --- |
+| `quality` | lint, verificação de formatação, typecheck, testes, testes com DynamoDB Local e build do frontend |
+| `infra` | verificação do lockfile do npm, `sam validate --lint` e `sam build` |
+
+O CI valida, mas não publica. Ele não tem credenciais AWS.
+
+## Riscos a conhecer antes de publicar
+
+- **Nome fixo da tabela.** `lumora-app` é fixo no template. Uma segunda stack na mesma conta e região falha por conflito de nome.
+- **Sem proteção contra exclusão.** A tabela e o bucket não têm `DeletionPolicy` nem `UpdateReplacePolicy`. Excluir a stack, ou alterar uma propriedade que force a substituição do recurso, remove a tabela. Um bucket com objetos impede a exclusão da stack.
+- **Versão do sharp.** A versão no `Makefile` da layer deve ser igual à de `services/api/package.json`.
+- **Rotas em dois lugares.** Uma rota nova precisa ser declarada no template e no `switch` de `studioApi.ts`.
+- **CORS da API.** A API aceita qualquer origem. A proteção das rotas é o JWT, e não a origem.

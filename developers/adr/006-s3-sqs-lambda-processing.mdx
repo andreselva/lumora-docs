@@ -1,0 +1,46 @@
+---
+title: "ADR-006 — Processamento por S3, SQS e Lambda"
+description: "O evento de criação do objeto vai para uma fila SQS com DLQ, consumida por uma Lambda dedicada."
+sidebarTitle: "006 — S3, SQS e Lambda"
+---
+
+## Status
+
+Aceita. Origem: decisão D10 do `README.md` do repositório `lumora`.
+
+## Contexto
+
+Cada original precisa ser validado e transformado em miniatura e preview. Esse trabalho é pesado, sujeito a falhas passageiras e chega em rajadas: um lote de mil fotos gera mil eventos em poucos minutos.
+
+O processamento precisa de um ponto que absorva essas rajadas, limite a concorrência e preserve o que falhou para nova tentativa.
+
+## Decisão
+
+- O bucket publica `s3:ObjectCreated:Post`, filtrado pelo sufixo `/original.jpeg`, em uma **fila SQS standard**.
+- Uma Lambda dedicada, o `imageProcessor`, consome a fila com **lote de 1** e **concorrência máxima de 30**.
+- A fila tem uma **DLQ**, para onde a mensagem vai depois de 5 recebimentos.
+- O handler usa **resposta parcial de lote** (`ReportBatchItemFailures`).
+- Falhas são classificadas: conteúdo inválido marca a foto como `FAILED` e encerra; qualquer outra falha devolve a mensagem à fila.
+- Um alarme no CloudWatch dispara quando há mensagem visível na DLQ.
+
+## Consequências
+
+**Benefícios**
+
+- A fila absorve rajadas. O teto de concorrência protege o DynamoDB e a conta.
+- O retry é da infraestrutura: uma falha passageira é repetida sem código próprio.
+- Mensagens que esgotam as tentativas ficam preservadas na DLQ, por 14 dias, para investigação e redrive.
+- O processador tem memória, tempo e permissões próprios, sem afetar a API.
+- O filtro de sufixo impede que os derivados gravados pelo processador gerem novos eventos.
+
+**Custos**
+
+- A fila standard entrega **pelo menos uma vez** e sem ordem. O processador precisa ser idempotente, o que levou ao [ADR-007](/developers/adr/007-processing-lease-and-pinned-version).
+- O resultado não é imediato. O frontend precisa consultar o estado, hoje por polling.
+- Uma falha transitória só é repetida após o visibility timeout, de 360 segundos. A recuperação de uma foto leva minutos.
+- Uma foto cuja mensagem foi para a DLQ fica em `PROCESSING` até um redrive manual.
+- Com lote de 1, cada foto é uma invocação. Simplifica o tratamento de falha, ao custo de mais invocações.
+
+## Alternativas
+
+Não há alternativas registradas no repositório para esta decisão.

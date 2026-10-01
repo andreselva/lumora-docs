@@ -1,0 +1,50 @@
+---
+title: "ADR-008 — Derivados em uma pasta por tentativa"
+description: "Miniatura e preview são gravadas sob o identificador da tentativa, e a leitura segue a tentativa que concluiu."
+sidebarTitle: "008 — Derivados por tentativa"
+---
+
+## Status
+
+Aceita. Origem: decisão D10 do `README.md` do repositório `lumora`, regra "Versão do original".
+
+## Contexto
+
+O [ADR-007](/developers/adr/007-processing-lease-and-pinned-version) impede que um worker atrasado altere o **estado** da foto no DynamoDB. Mas a gravação dos derivados no S3 acontece antes da conclusão e não é condicional.
+
+Se os derivados tivessem um caminho fixo por foto, um worker atrasado poderia sobrescrever a miniatura já publicada por outro. Ou, pior, deixar a miniatura de uma tentativa e a preview de outra.
+
+Os derivados também são gravados com cache de longa duração e marcados como imutáveis. Sobrescrever um objeto com esse cabeçalho serviria conteúdo antigo a quem já o tivesse em cache.
+
+## Decisão
+
+- Gravar os derivados em `photos/{ownerId}/{eventId}/{galleryId}/{photoId}/attempts/{attemptId}/`.
+- Na conclusão, gravar na foto o `completedAttemptId`.
+- Na leitura, montar a chave da miniatura a partir de `completedAttemptId`.
+- Manter os derivados no mesmo bucket do original, sob o prefixo da foto, em WebP.
+- Incluir no nome do arquivo a versão das regras de geração (`thumb-v1.webp`, `preview-v1.webp`).
+
+## Consequências
+
+**Benefícios**
+
+- Duas tentativas nunca escrevem no mesmo objeto. Não é preciso escrita condicional no S3.
+- Miniatura e preview publicadas vêm sempre da mesma tentativa.
+- Um objeto publicado nunca muda, o que é coerente com o cabeçalho `immutable`.
+- Tudo de uma foto fica sob um único prefixo.
+
+**Custos**
+
+- Tentativas interrompidas ou derrotadas deixam arquivos órfãos em suas pastas. Não há limpeza automática.
+- A chave do derivado só pode ser montada com um dado do DynamoDB. Não é possível deduzi-la apenas dos ids.
+- A leitura mantém compatibilidade com fotos antigas, sem `completedAttemptId`, cujos derivados ficam direto na pasta da foto.
+
+## Diferenças em relação ao `README.md`
+
+O `README.md` (decisão D6) descreve três buckets, `web`, `originals` e `media`, com os derivados em um bucket próprio atrás de CloudFront. O argumento é que separar originais de mídia impede que um erro de configuração do CDN exponha um original.
+
+O código atual usa **um único bucket**, privado, sem CloudFront. Originais e derivados compartilham o prefixo `photos/`, e a miniatura é servida por URL assinada. A separação em buckets é uma consideração futura registrada em [Limitações](/developers/limitations#considerações-futuras).
+
+## Alternativas
+
+Não há outras alternativas registradas no repositório para esta decisão.

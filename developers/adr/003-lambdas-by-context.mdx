@@ -1,0 +1,52 @@
+---
+title: "ADR-003 — Lambdas agrupadas por contexto"
+description: "Poucas funções Lambda, separadas por gatilho e perfil de execução, com roteamento interno por routeKey."
+sidebarTitle: "003 — Lambdas por contexto"
+---
+
+## Status
+
+Aceita. Origem: decisões D1, D4 e D5 do `README.md` do repositório `lumora`.
+
+## Contexto
+
+Em uma arquitetura serverless há duas formas extremas de organizar o código: uma função por endpoint ou uma única função para tudo.
+
+Uma função por endpoint multiplica recursos, permissões e cold starts. Uma função única mistura cargas com necessidades diferentes de memória, tempo e permissão.
+
+## Decisão
+
+Criar uma função por **contexto de execução**, e não por endpoint. Uma função nova só se justifica quando o gatilho, as permissões, o timeout ou a memória são diferentes.
+
+Hoje são três:
+
+| Função | Gatilho | Por que é separada |
+| --- | --- | --- |
+| `studio-api` | HTTP API | Requisições curtas, com leitura e escrita de metadados. |
+| `postConfirmation` | Cognito | Outro gatilho. Só precisa de `PutItem`. |
+| `imageProcessor` | SQS | Mais memória e tempo, binário nativo, permissão de leitura de objetos. |
+
+Dentro da `studio-api`, o roteamento é um `switch` sobre `event.routeKey`. As rotas continuam declaradas uma a uma no template SAM.
+
+Não há framework web nem contêiner de injeção de dependência. As dependências são instanciadas no escopo do módulo.
+
+## Consequências
+
+**Benefícios**
+
+- Menos recursos para manter e um único bundle por contexto.
+- Permissões mínimas por contexto. A `studio-api` não lê bytes de fotos; o `imageProcessor` não lista nem exclui itens.
+- Declarar as rotas no template mantém autorização e limites configuráveis por rota, mesmo com uma só função.
+- Sem camadas de framework no caminho da requisição.
+
+**Custos**
+
+- Cada rota é declarada em dois lugares: no template e no `switch`. Uma rota presente em só um deles não funciona.
+- O handler da `studio-api` cresce a cada rota, com a lista de dependências instanciadas à mão.
+- Todas as rotas compartilham memória, timeout e o conjunto de permissões da função.
+
+## Alternativas
+
+O `README.md` registra a intenção de dividir o template em nested stacks quando ele passar de cerca de mil linhas, e de avaliar Step Functions antes de qualquer servidor caso surja um processamento que não caiba em Lambda.
+
+O `README.md` prevê outras quatro funções: `galleryAuthorizer`, `galleryApi`, `paymentWebhook` e `paymentReconciler`. Nenhuma existe atualmente.

@@ -1,0 +1,152 @@
+---
+title: "Eventos e galerias"
+description: "Criação, edição, listagem e exclusão de eventos e galerias, com as invariantes que as transações protegem."
+---
+
+Eventos e galerias são os fluxos síncronos do Lumora. Todos passam pela `studio-api` e pelo DynamoDB, sem fila e sem S3.
+
+## Invariantes
+
+Três regras orientam esses fluxos:
+
+1. **Todo evento tem exatamente uma galeria principal.** Ela nasce com o evento e só sai com ele.
+2. **A galeria principal não é excluída pelo CRUD de galerias.**
+3. **Só um evento vazio pode ser excluído.**
+
+As três são garantidas na própria escrita, por transação e condição, e não por leitura seguida de escrita.
+
+## Criar um evento
+
+**Entrada:** `POST /events`, com `name`, `eventDate` e `expiresAt`.
+
+**Sequência:**
+
+1. O controller valida o corpo com `CreateEventInputSchema`.
+2. `CreateEvent` cria a entidade `Event`, em `DRAFT`, e a galeria principal com `Gallery.createDefault`, de nome "Galeria principal".
+3. `DynamoDbEventRepository.create` grava os dois itens em uma transação, cada um condicionado a não existir.
+
+**Garantia:** não existe janela em que um evento esteja sem galeria principal. Se a transação falhar, nenhum dos dois itens é gravado.
+
+**Resposta:** 201 com o evento.
+
+No frontend, `useCreateEvent` grava o evento no cache, invalida a lista e navega para a página do evento.
+
+### Sobre as datas
+
+- `eventDate` é uma data de calendário, sem fuso, enviada como o usuário digitou.
+- `expiresAt` é um instante. O formulário pede só o dia, e `eventForm.ts` o converte para o fim daquele dia no fuso do navegador, em UTC.
+
+Atualmente `expiresAt` é apenas armazenado. Nenhum código o consulta para mudar o comportamento do evento.
+
+## Listar e ler eventos
+
+**Entrada:** `GET /events` e `GET /events/{eventId}`.
+
+A lista devolve 20 eventos por página, do mais recente para o mais antigo, com `nextCursor` quando há mais.
+
+Em ambas as rotas, o `photoCount` de cada evento é calculado na leitura, percorrendo as fotos do evento. Veja o custo no [ADR-009](/developers/adr/009-derived-photo-counters).
+
+## Editar um evento
+
+**Entrada:** `PATCH /events/{eventId}`, com qualquer subconjunto de `name`, `eventDate` e `expiresAt`. Ao menos um campo é obrigatório.
+
+**Sequência:** um `UpdateItem` que altera só os campos enviados, condicionado à existência do evento, com `ReturnValues: ALL_NEW`.
+
+**Garantias e limites:**
+
+- A resposta reflete o item como ficou nessa escrita, sem uma leitura posterior.
+- A edição é permitida em qualquer `status`.
+- Não há controle de versão. Duas edições simultâneas do mesmo campo seguem a regra "a última escrita vence".
+
+No frontend, `changedEventFields` envia só o que mudou. Em particular, `expiresAt` não é reenviado quando o dia não mudou, para não reescrever um horário gravado em outro fuso.
+
+## Publicar e arquivar
+
+A entidade `Event` e o `DynamoDbEventRepository` implementam as transições `publish` (`DRAFT` para `PUBLISHED`) e `archive` (`PUBLISHED` para `ARCHIVED`), incluindo o tratamento de repetição como operação sem efeito.
+
+<Warning>
+  Essas transições não estão expostas. Não há rota no template, caso de uso nem controle na tela. Atualmente todo evento permanece em `DRAFT`.
+</Warning>
+
+## Excluir um evento
+
+**Entrada:** `DELETE /events/{eventId}`.
+
+**Sequência:**
+
+1. O repositório consulta até duas galerias do evento.
+2. Se houver mais de uma, ou se a única não for a principal, lança `EventNotEmptyError`.
+3. Caso contrário, executa uma transação que exclui o evento e a galeria principal.
+
+A exclusão do evento é condicionada, na mesma transação, a:
+
+- `galleryCount` igual a 1;
+- `registeredPhotoCount` igual a 0 ou ausente;
+- `photoCount` e `orderCount` iguais a 0;
+- `pendingPhotoCount`, um contador legado, igual a 0 ou ausente.
+
+**Garantia:** as condições são avaliadas na escrita. Um upload registrado entre a consulta e a exclusão incrementa `registeredPhotoCount` e faz a transação falhar.
+
+**Respostas:**
+
+| Situação | Resposta |
+| --- | --- |
+| Evento vazio excluído | 204 |
+| Evento inexistente, já excluído ou de outro fotógrafo | 204, sem alterar nada |
+| Evento com conteúdo | 409 `EVENT_NOT_EMPTY` |
+
+Responder 204 a um evento ausente torna a operação segura para repetição. O caso típico é a nova tentativa depois de um timeout em que a exclusão já tinha sido aplicada.
+
+**Limites:**
+
+- Não há exclusão em cascata. Galerias adicionais precisam ser removidas antes.
+- Como `registeredPhotoCount` só aumenta e não existe exclusão de fotos, um evento que já recebeu qualquer foto não pode ser excluído.
+
+<Warning>
+  A tela atual impede a exclusão antes de chamar a API. `DeleteEventDialog` considera que o evento tem conteúdo quando `galleryCount` é maior que 0, e todo evento novo tem `galleryCount` igual a 1 por causa da galeria principal. Os testes da tela usam um evento com `galleryCount` igual a 0, que a API atual não produz. Veja [Limitações](/developers/limitations#limitações-atuais).
+</Warning>
+
+## Criar uma galeria
+
+**Entrada:** `POST /events/{eventId}/galleries`, com `name`.
+
+**Sequência:** uma transação que incrementa `galleryCount` no evento, condicionada à existência dele, e grava a galeria.
+
+**Garantia:** uma galeria nunca é criada em um evento inexistente ou de outro fotógrafo. Nesse caso a transação falha e a resposta é 404.
+
+O repositório recusa `isDefault: true` nesse caminho. A galeria principal só nasce junto com o evento.
+
+## Listar e ler galerias
+
+`GET /events/{eventId}/galleries` devolve todas as galerias do evento, sem paginação. O caso de uso lê o evento antes, para distinguir "evento sem galerias" de "evento inexistente".
+
+## Renomear uma galeria
+
+**Entrada:** `PATCH /events/{eventId}/galleries/{galleryId}`, com `name`.
+
+O nome é o único campo editável. O caso de uso lê a galeria, chama `gallery.rename` e grava com uma escrita condicionada à existência e ao dono. Renomeações simultâneas seguem "a última escrita vence".
+
+## Excluir uma galeria
+
+**Entrada:** `DELETE /events/{eventId}/galleries/{galleryId}`.
+
+**Sequência:**
+
+1. O caso de uso lê a galeria e chama `assertCanBeDeleted`, que recusa a principal.
+2. O repositório executa uma transação que exclui a galeria, condicionada a `isDefault = false`, e decrementa `galleryCount`.
+
+A recusa da galeria principal acontece duas vezes: na entidade e na condição da escrita. A segunda protege contra uma corrida entre a leitura e a exclusão.
+
+**Respostas:** 204 em caso de sucesso, 409 `DEFAULT_GALLERY_NOT_DELETABLE` para a principal, 404 para galeria inexistente.
+
+<Warning>
+  A exclusão de galeria não verifica nem remove as fotos da galeria. Excluir uma galeria com fotos deixaria os itens `PHOTO#` e `FP#` no DynamoDB e os objetos no S3 sem galeria correspondente. Um comentário em `DeleteGallery.ts` registra que a cascata ainda não existe. Atualmente a tela não oferece essa operação, o que limita a exposição a chamadas diretas à API.
+</Warning>
+
+## Conflitos de transação
+
+Transações concorrentes sobre os mesmos itens podem ser canceladas pelo DynamoDB com `TransactionConflict`. O helper `sendTransaction` repete até 3 vezes, com backoff e jitter.
+
+Se o conflito persistir, a API responde 409 `CONFLICT`, com a mensagem de que outra alteração está em andamento. Nada foi gravado, e o cliente pode repetir.
+
+O caso mais provável são requisições simultâneas de registro de fotos no mesmo evento, por exemplo a partir de duas galerias, já que cada registro atualiza `registeredPhotoCount` no mesmo item.

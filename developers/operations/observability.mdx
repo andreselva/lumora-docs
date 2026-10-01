@@ -1,0 +1,138 @@
+---
+title: "Observabilidade"
+description: "Logs estruturados, o alarme da DLQ e o que ainda não é medido."
+---
+
+A observabilidade do Lumora hoje se resume a **logs estruturados** e **um alarme**. Não há métricas próprias, tracing nem dashboard.
+
+## Logs
+
+As três funções usam o Logger do AWS Lambda Powertools, que escreve uma linha JSON por registro no CloudWatch Logs.
+
+| Função | `service` no log | Retenção |
+| --- | --- | --- |
+| `studio-api` | `studio-api` | 14 dias |
+| `ImageProcessorFunction` | `image-processor` | 14 dias |
+| `PostConfirmationFunction` | `studio-api` | 14 dias |
+
+O `postConfirmation` usa a mesma instância de logger da API, por isso seus registros também saem com `service` igual a `studio-api`. O log group é o que distingue as duas funções.
+
+### Campos da `studio-api`
+
+Cada registro de uma requisição carrega:
+
+- `requestId`, o id da requisição no API Gateway;
+- `routeKey`, por exemplo `POST /events`.
+
+A API registra apenas erros inesperados, com a mensagem "Falha ao processar requisição" e o erro. Respostas 4xx esperadas, como validação e recurso não encontrado, não geram log da aplicação.
+
+Requisições recusadas pelo JWT authorizer não chegam à Lambda e não aparecem nesses logs.
+
+### Campos do `imageProcessor`
+
+Cada registro de uma mensagem carrega `messageId` e `senderId`.
+
+Os registros de falha no processamento trazem ainda:
+
+| Campo | Conteúdo |
+| --- | --- |
+| `photoId`, `eventId`, `galleryId` | A foto em processamento |
+| `sourceVersionId` | A versão do objeto no S3 |
+| `processingAttemptId` | A tentativa, ou `null` se a falha foi antes da reivindicação |
+| `stage` | A etapa em que a falha ocorreu |
+| `errorName`, `errorMessage`, `stack` | O erro |
+
+Valores de `stage`: `claim`, `getPhoto`, `headOriginal`, `validate`, `getOriginal`, `thumbnail`, `putThumbnail`, `preview`, `putPreview`, `markAvailable`, `markFailed` e `message`.
+
+### Mensagens do `imageProcessor`
+
+| Mensagem | Nível | Significado |
+| --- | --- | --- |
+| `Foto rejeitada por conteúdo inválido` | warn | Falha permanente. A foto foi marcada como `FAILED`. |
+| `Erro ao processar foto` | error | Falha no caso de uso. A mensagem volta para a fila. |
+| `Erro ao processar mensagem SQS` | error | Falha no handler. A mensagem volta para a fila. |
+| `Parser da key incorreto` | warn | A chave do objeto não segue o padrão. A mensagem é descartada. |
+| `Record versionId ausente` | error | O evento do S3 veio sem versão. |
+| `Ignorando s3TestEvent` | info | Evento de teste enviado pelo S3 ao configurar a notificação. |
+
+Uma falha transitória costuma gerar dois registros de erro: um no caso de uso, com `stage` específico, e outro no handler, com `stage` igual a `message`.
+
+Uma reivindicação recusada, como a de uma mensagem duplicada, **não gera log**. O caso de uso retorna em silêncio.
+
+### Consultas úteis
+
+Exemplos para o CloudWatch Logs Insights, no log group do `imageProcessor`.
+
+Histórico de uma foto:
+
+```
+fields @timestamp, level, message, stage, processingAttemptId, errorMessage
+| filter photoId = "ID_DA_FOTO"
+| sort @timestamp asc
+```
+
+Falhas por etapa:
+
+```
+fields @timestamp
+| filter level = "ERROR"
+| stats count() by stage, errorName
+```
+
+Fotos rejeitadas por conteúdo:
+
+```
+fields @timestamp, photoId, eventId, stage, errorMessage
+| filter message = "Foto rejeitada por conteúdo inválido"
+| sort @timestamp desc
+```
+
+## Alarme
+
+Há um alarme, `PhotoProcessingDlqAlarm`.
+
+| Propriedade | Valor |
+| --- | --- |
+| Métrica | `ApproximateNumberOfMessagesVisible` da DLQ |
+| Condição | Máximo maior ou igual a 1 |
+| Período | 60 segundos, um ponto de dados |
+| Dados ausentes | Tratados como normais |
+| Ação | Publica em um tópico SNS |
+
+O alarme indica que ao menos uma foto esgotou as tentativas de processamento e está parada em `PROCESSING`.
+
+<Warning>
+  O template cria o tópico SNS, mas nenhuma assinatura. Sem um assinante, o alarme muda de estado e ninguém é avisado. Assine o tópico da saída `PhotoProcessingAlarmTopicArn`.
+</Warning>
+
+O que fazer quando o alarme dispara está em [Solução de problemas](/developers/operations/troubleshooting#mensagens-na-dlq).
+
+## Sinais do lado do produto
+
+O resumo de upload, `GET /events/{eventId}/upload-summary`, é também uma ferramenta de diagnóstico. Ele mostra, por evento, quantas fotos estão em cada estado:
+
+- `PENDING_UPLOAD` que não diminui indica originais que não chegaram ao S3, ou eventos que não chegaram à fila;
+- `PROCESSING` que não diminui indica falhas transitórias repetidas ou mensagens na DLQ;
+- `FAILED` indica arquivos rejeitados por conteúdo.
+
+## O que não existe
+
+| Item | Situação |
+| --- | --- |
+| Métricas de negócio ou de processamento | Não há. Apenas as métricas padrão dos serviços AWS. |
+| Tracing (X-Ray) | Não habilitado. |
+| Dashboard | Não há. |
+| Alarmes de erro das Lambdas, de 5xx da API ou de idade da fila | Não há. |
+| Log de requisições bem-sucedidas | A API não registra. |
+| Log de acesso do API Gateway | Não configurado. |
+| Correlação entre a requisição de upload e o processamento | Não há id comum. A ligação é o `photoId`. |
+
+O `README.md` do repositório `lumora` descreve um plano incremental de observabilidade (decisão D14), com métricas em EMF, mais alarmes e um dashboard. Desse plano, estão implementados os logs estruturados, a retenção de logs, a DLQ e o alarme da DLQ.
+
+## Dados sensíveis nos logs
+
+- A API não registra corpos de requisição nem tokens.
+- As respostas de validação não devolvem o valor enviado, apenas o campo e o código.
+- O `postConfirmation` registra `userName` e `userPoolId` a cada confirmação.
+- Os logs de falha do processamento incluem identificadores de foto, evento e galeria, mas não o nome original do arquivo.
+- Os registros `Parser da key incorreto` e `Record versionId ausente` incluem a chave do objeto no S3, que contém o `sub` do fotógrafo.

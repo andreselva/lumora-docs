@@ -1,0 +1,63 @@
+---
+title: "ADR-007 — Lease de processamento e versão fixada do original"
+description: "Um UpdateItem condicional coordena o processamento com um lease temporário e fixa a versão do objeto no S3."
+sidebarTitle: "007 — Lease e versão fixada"
+---
+
+## Status
+
+Aceita. Origem: decisão D10 do `README.md` do repositório `lumora`, regras "Idempotência e lease" e "Versão do original".
+
+## Contexto
+
+A fila entrega cada mensagem pelo menos uma vez ([ADR-006](/developers/adr/006-s3-sqs-lambda-processing)). Além disso, o presigned POST pode ser reutilizado dentro da validade ([ADR-005](/developers/adr/005-presigned-post-upload)), criando mais de um objeto para a mesma foto.
+
+Disso resultam quatro problemas:
+
+1. **Duplicatas.** Dois workers recebem a mesma mensagem e processam a mesma foto em paralelo.
+2. **Worker morto.** Um worker assume a foto e morre. Sem um prazo, ninguém mais pode assumir.
+3. **Worker atrasado.** Um worker lento conclui depois que outro já assumiu e sobrescreve o resultado.
+4. **Original trocado.** Um segundo envio para a mesma chave substitui os bytes enquanto o processamento está em curso.
+
+Um lock sem prazo resolve o primeiro e agrava o segundo. Um status simples de "em processamento" não distingue um worker vivo de um morto.
+
+## Decisão
+
+Coordenar o processamento com atributos no próprio item da foto, alterados por **um `UpdateItem` condicional**, sem leitura prévia e sem transação.
+
+- **Versionamento do bucket.** Cada envio cria uma versão imutável, identificada no evento do S3.
+- **Versão fixada.** A primeira reivindicação grava `sourceVersionId`. Nenhuma outra versão assume a foto depois disso, nem após o lease vencer. As leituras do original usam esse `VersionId`.
+- **Tentativa identificada.** Cada reivindicação gera um UUID, `processingAttemptId`.
+- **Lease.** A reivindicação grava `processingLeaseUntil`, 90 segundos à frente. Enquanto ele vale, nenhuma outra tentativa assume. Depois de vencido, a mesma versão pode ser reivindicada de novo.
+- **Conclusão restrita ao dono.** A conclusão exige estado `PROCESSING`, a mesma tentativa, a mesma versão e lease válido. Ela remove o lease e grava `completedAttemptId`.
+- **Repetição reconhecida.** Reivindicação e conclusão inspecionam o item devolvido na falha de condição e aceitam a própria repetição.
+- **Ordem dos tempos.** Timeout da Lambda (60 s) menor que o lease (90 s), menor que o visibility timeout (360 s).
+
+## Consequências
+
+**Benefícios**
+
+- Os quatro problemas têm resposta: duplicatas são recusadas na reivindicação; um worker morto libera a foto quando o lease vence; um worker atrasado é barrado na conclusão; o original é lido pela versão fixada.
+- Uma duplicata custa uma escrita condicional recusada. Nenhuma leitura no S3.
+- Não há serviço de lock nem tabela auxiliar. O estado da coordenação mora com a foto.
+- O processador não escreve no item do evento. Mil fotos concluindo em paralelo não disputam um mesmo item.
+- Um redrive da DLQ retoma a mesma versão, sem regra especial.
+
+**Custos**
+
+- O raciocínio é sutil. As condições de escrita concentram toda a correção e precisam de testes de concorrência, hoje em `DynamoDbPhotoRepository.dynamodb.spec.ts`.
+- Os três tempos estão em lugares diferentes: a constante `PROCESSING_LEASE_MS` no código e os outros dois no template. Alterar um sem os outros quebra as garantias sem erro aparente.
+- O lease não é renovado. Um processamento legítimo que durasse mais que 90 segundos perderia a posse. Hoje o timeout de 60 segundos torna isso impossível.
+- A recuperação de um worker morto espera o visibility timeout, de 6 minutos.
+- O versionamento do bucket aumenta o armazenamento. Uma regra de lifecycle remove versões não correntes após 15 dias.
+- A comparação do lease usa o relógio de cada invocação da Lambda.
+
+## Implantação
+
+O `README.md` registra que a API e o processador devem ser publicados de forma coordenada, sem misturar escritores antigos e novos, porque uma versão anterior do worker não conhece o lease.
+
+O código mantém uma tolerância para dados antigos: fotos em `PROCESSING` sem `processingLeaseUntil` podem ser reivindicadas pela mesma versão.
+
+## Alternativas
+
+Não há alternativas registradas no repositório para esta decisão.

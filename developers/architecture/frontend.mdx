@@ -1,0 +1,181 @@
+---
+title: "Frontend"
+description: "Estrutura da SPA React, autenticação, comunicação com a API, estado remoto e o gerenciador de uploads."
+---
+
+O frontend é uma SPA em React 19 com TypeScript, construída com Vite. Fica em `apps/web`.
+
+| Assunto | Tecnologia |
+| --- | --- |
+| Build e dev server | Vite |
+| Rotas | React Router (`BrowserRouter`) |
+| Estado remoto | TanStack Query |
+| Autenticação | AWS Amplify (`aws-amplify`, `@aws-amplify/ui-react`) |
+| Validação de contratos | zod, via `@photos/contracts` |
+| UI | Tailwind CSS 4, componentes no estilo shadcn sobre Radix |
+| Testes | Vitest, Testing Library, MSW |
+
+## Estrutura
+
+```
+apps/web/src
+├── App.tsx            rotas de topo, carregadas sob demanda
+├── lib                cliente HTTP genérico e envio ao storage
+├── studio             área do fotógrafo (/app/*)
+│   ├── StudioRoutes   rotas dentro do Authenticator
+│   ├── api.ts         cliente HTTP autenticado
+│   ├── hooks          um hook por operação da API
+│   ├── pages          páginas
+│   ├── events         componentes de evento
+│   └── galleries      componentes de galeria e o UploadManager
+├── gallery            área do cliente (/g/:token/*), ainda sem conteúdo
+├── components         layout de página e componentes de UI
+└── mocks              handlers MSW, opcionais
+```
+
+`App.tsx` declara duas áreas, cada uma carregada com `lazy`:
+
+- `/app/*`: o Lumora Studio, área do fotógrafo. A raiz `/` redireciona para `/app`.
+- `/g/:token/*`: a galeria do cliente. Atualmente existe apenas o layout e o contexto que guarda o token; não há páginas nem chamadas à API.
+
+### Rotas do Studio
+
+| Rota | Página | Estado |
+| --- | --- | --- |
+| `/app` | `HomePage` | Mostra apenas o resultado de `GET /health`. |
+| `/app/eventos` | `EventsPage` | Lista paginada de eventos. |
+| `/app/eventos/novo` | `CreateEventPage` | Formulário de criação. |
+| `/app/eventos/:eventId` | `EventWorkspacePage` | Evento, galerias e fotos da galeria principal. |
+| `/app/eventos/:eventId/galerias/:galleryId` | `EventWorkspacePage` | O mesmo, com uma galeria específica selecionada. |
+| `/app/minha-conta` | `MyAccountPage` | Dados do perfil. |
+| `/app/pedidos/*`, `/app/configuracoes/*` | nenhuma | Rotas declaradas sem elemento. |
+
+## Autenticação
+
+O Studio inteiro fica dentro do componente `Authenticator` do Amplify UI, em `studio/StudioRoutes.tsx`. Sem sessão, o `Authenticator` renderiza as telas de entrada e cadastro no lugar das rotas.
+
+`studio/amplify.ts` configura o Amplify com o User Pool e o client, lidos de variáveis de ambiente. A configuração só acontece quando as duas variáveis estão preenchidas.
+
+O fluxo completo, incluindo a validação no API Gateway, está em [Autenticação](/developers/flows/authentication).
+
+## Comunicação com a API
+
+Há duas camadas:
+
+1. `lib/apiClient.ts` expõe `createApiClient`, um cliente genérico sobre `fetch`. Cada chamada recebe um schema zod e devolve dados já validados.
+2. `studio/api.ts` cria a instância `studioApi`, que obtém o access token com `fetchAuthSession()` a cada requisição e o envia em `Authorization: Bearer`.
+
+O cliente normaliza as falhas em uma única classe, `ApiError`, com `status` e `code`:
+
+| Situação | `status` | `code` |
+| --- | --- | --- |
+| Falha de rede | `0` | `NETWORK_ERROR` |
+| Erro com corpo no formato da API | o da resposta | o `code` da resposta |
+| Erro com corpo fora do formato | o da resposta | `HTTP_ERROR` |
+| Sucesso com corpo fora do schema | o da resposta | `INVALID_RESPONSE` |
+| Sem sessão | `401` | `UNAUTHENTICATED` |
+
+Validar a resposta no cliente faz com que uma mudança incompatível de contrato apareça como erro explícito, e não como `undefined` espalhado pela tela.
+
+<Note>
+  `lib/clients.ts` exporta `studioClient` e `galleryClient` com tokens de exemplo fixos. Nenhum outro módulo os importa. Parecem resquício de uma etapa anterior; o cliente em uso é `studio/api.ts`.
+</Note>
+
+## Estado remoto
+
+Todo dado do servidor passa pelo TanStack Query. A configuração global, em `main.tsx`, usa `retry: 1` e desliga o refetch ao focar a janela.
+
+Cada operação tem um hook em `studio/hooks`, por exemplo `useEvents`, `useEvent`, `useEventGalleries` e `useGalleryPhotos`.
+
+### O `sub` faz parte de toda query key
+
+As chaves seguem o formato `['studio', recurso, sub, ...ids]`. Incluir o `sub` do usuário impede que dados em cache de uma sessão apareçam em outra, no mesmo navegador.
+
+O logout, em `StudioLayout`, reforça isso em três passos:
+
+1. cancela as queries em andamento com prefixo `studio`;
+2. chama `signOut()`;
+3. limpa o cache e descarta os gerenciadores de upload.
+
+`useMe` e `useBootstrapMe` conferem ainda se o `id` devolvido pela API é igual ao `sub` da sessão ativa antes de aceitar o resultado. O teste `session-race.review.test.tsx` cobre trocas de sessão durante requisições.
+
+### Atualização após escritas
+
+As mutations atualizam o cache de duas formas, conforme o caso:
+
+- **`setQueryData`** quando a resposta já traz o recurso atualizado, como ao criar ou editar um evento;
+- **`invalidateQueries`** para listas paginadas, cuja ordem é decidida pelo servidor.
+
+### Listas paginadas
+
+`useEvents` e `useGalleryPhotos` usam `useInfiniteQuery`. A API devolve `nextCursor`, um valor opaco que o cliente apenas reenvia.
+
+## Upload de arquivos
+
+O upload é a parte mais elaborada do frontend. A lógica fica fora do React, na classe `UploadManager`, em `studio/galleries/uploadManager.ts`.
+
+### Por que fora do React
+
+Uma fila de upload precisa sobreviver a re-renderizações e à navegação entre telas. Se vivesse em estado de componente, sair da página do evento interromperia o envio.
+
+Há um `UploadManager` por combinação de usuário, evento e galeria, guardado em um `Map` de módulo. O React se conecta a ele com `useSyncExternalStore`:
+
+- `useUploadPhotos` dispara ações (`add`, `retry`) sem assinar o estado;
+- `useUploadQueue` assina o snapshot e é usado só pelo componente `UploadQueue`.
+
+Essa separação evita que cada evento de progresso re-renderize o painel inteiro da galeria.
+
+### O que o `UploadManager` faz
+
+| Mecanismo | Comportamento |
+| --- | --- |
+| Pool de envios | Até 4 envios simultâneos ao S3. Cada vaga pega o próximo arquivo assim que termina o anterior. |
+| Tickets sob demanda | Os presigned POSTs são pedidos em lotes de 8, apenas quando a reserva cai a 4 ou menos. Nunca para a fila inteira, para que não expirem. |
+| Ordem natural | Os arquivos são ordenados por nome com `Intl.Collator` numérico. |
+| Retry automático | Falhas de rede e respostas 5xx são repetidas até 3 tentativas, com backoff exponencial e jitter. |
+| Renovação de ticket | Um 403 do S3 faz o manager pedir um novo ticket, uma única vez. |
+| Progresso agregado | Os eventos de progresso do XHR são acumulados e emitidos no máximo a cada 100 ms. |
+| Limpeza | Arquivos concluídos saem da fila quando o lote termina. Só os que falharam ficam, para retry. |
+
+O envio usa `XMLHttpRequest`, em `lib/storageClient.ts`, porque o `fetch` não expõe o progresso do corpo enviado.
+
+O fluxo ponta a ponta, com a parte do servidor, está em [Upload de fotos](/developers/flows/photo-upload).
+
+### Estado global derivado dos managers
+
+Dois mecanismos de módulo observam todos os managers:
+
+- **`createUnloadGuard`** registra um listener de `beforeunload` enquanto algum manager tiver trabalho, para o navegador pedir confirmação antes de fechar a aba.
+- **`createEventUploadActivity`** soma a atividade das galerias de um evento. O resumo do servidor é por evento, então é nesse nível que a tela decide se continua consultando.
+
+<Note>
+  O `UploadManager` implementa `pause()` e `resume()`, e `useUploadPhotos` os expõe. Atualmente nenhum componente os chama: não há controle de pausa na tela.
+</Note>
+
+### A fila não é persistida
+
+A fila vive só na memória da aba. Fechar ou recarregar a página a descarta. A retomada depende do servidor: ao selecionar os mesmos arquivos de novo, a API reconhece cada um pelo fingerprint e só emite ticket para o que falta.
+
+## Acompanhamento do processamento
+
+`useEventUploadSummary` consulta `GET /events/{eventId}/upload-summary` a cada 5 segundos enquanto houver trabalho. As regras de quando consultar e quando parar estão em [Upload de fotos](/developers/flows/photo-upload#acompanhamento-pelo-frontend).
+
+## Rascunho da galeria
+
+`useGalleryDraft` guarda alterações locais ainda não salvas de uma galeria: o novo nome e o conjunto de fotos marcadas para exclusão. O botão **Salvar alterações** aplica as duas, uma por vez.
+
+Enquanto houver rascunho, a página intercepta os próprios links e registra `beforeunload`. A barra lateral e o botão voltar do navegador não são interceptados, porque o app usa `BrowserRouter` sem `useBlocker`.
+
+## Contratos
+
+O frontend importa os schemas de `@photos/contracts`. Há uma exceção: `studio/galleries/contracts.ts` define schemas reduzidos de galeria e de foto, marcados no próprio arquivo como temporários.
+
+Esses schemas reduzidos aceitam `coverUrl` em galerias, e `useEvents` aceita `coverUrl` em eventos. A API atual não devolve esses campos, e os cartões mostram um ícone no lugar da capa.
+
+## Mocks
+
+O MSW só inicia em desenvolvimento e com `VITE_ENABLE_MSW=true`. Requisições sem handler seguem para a API real.
+
+<Warning>
+  Os handlers em `mocks/handlers/galleries.ts` foram escritos antes de a API expor galerias e fotos. Com o MSW ligado, eles interceptam essas rotas e respondem com dados fictícios, incluindo a rota de exclusão de fotos que a API não tem. Não use o MSW para validar o comportamento real desses fluxos.
+</Warning>

@@ -1,0 +1,166 @@
+---
+title: "Desenvolvimento local"
+description: "Prepare o ambiente, rode o frontend e os testes e entenda o que só pode ser validado na stack real."
+---
+
+O Lumora não tem um ambiente totalmente local. O frontend e os testes rodam na sua máquina. Cognito, S3, SQS e a integração entre eles só existem em uma stack de desenvolvimento na AWS.
+
+## Pré-requisitos
+
+| Ferramenta | Observação |
+| --- | --- |
+| Node.js | A versão exata do arquivo `.nvmrc`. Os scripts de teste recusam outra versão. |
+| pnpm | Gerenciador do monorepo. A versão está em `packageManager`, no `package.json` da raiz. |
+| Docker | Para o DynamoDB Local. |
+| AWS CLI v2 e AWS SAM CLI | Para a stack de desenvolvimento. |
+| Perfil AWS | O `samconfig.toml` espera um perfil chamado `lumora-dev`. |
+
+## Instalação
+
+```bash
+nvm use
+pnpm install
+```
+
+`services/api` tem também um `package-lock.json` do npm. Ele existe porque o build das Lambdas, feito pelo SAM, instala as dependências com `npm ci` dentro dessa pasta, fora do workspace do pnpm.
+
+<Warning>
+  Ao alterar dependências de `services/api`, atualize os dois lockfiles: o do pnpm, na raiz, e o `package-lock.json` da pasta. O CI executa `npm ci --dry-run` para detectar divergência.
+</Warning>
+
+## Frontend
+
+### Variáveis do frontend
+
+Crie `apps/web/.env.development` a partir de `apps/web/.env.example`:
+
+| Variável | Origem |
+| --- | --- |
+| `VITE_API_URL` | Saída `ApiUrl` da stack |
+| `VITE_COGNITO_USER_POOL_ID` | Saída `UserPoolId` da stack |
+| `VITE_COGNITO_USER_POOL_CLIENT_ID` | Saída `UserPoolClientId` da stack |
+| `VITE_ENABLE_MSW` | `false`, salvo quando quiser mocks |
+
+Esses valores identificam recursos da sua stack. Não os registre em documentação nem em commits.
+
+O Amplify só é configurado quando as duas variáveis do Cognito estão preenchidas.
+
+### Executar
+
+```bash
+pnpm --filter @photos/web dev
+```
+
+O Vite sobe em `http://localhost:5173`. Essa é a origem padrão aceita pelo CORS do bucket de fotos, definida pelo parâmetro `WebOrigin` do template. Se você servir o frontend em outra origem, o upload ao S3 falha por CORS.
+
+### Mocks
+
+```bash
+VITE_ENABLE_MSW=true pnpm --filter @photos/web dev
+```
+
+O MSW só inicia em modo de desenvolvimento e com essa variável igual a `true`. Reinicie o Vite e recarregue a página ao mudar o valor.
+
+<Warning>
+  Com o MSW ligado, as rotas de galerias e fotos são respondidas por dados fictícios, e não pela API. Os handlers são anteriores à implementação dessas rotas no backend. Use o MSW apenas para trabalho de interface.
+</Warning>
+
+## Backend
+
+Não há servidor local da API. O ciclo de desenvolvimento do backend é:
+
+1. escrever o código e os testes, que rodam localmente;
+2. sincronizar com a stack de desenvolvimento para validar a integração.
+
+```bash
+pnpm dev:cloud
+```
+
+Esse comando executa `sam sync --watch` com o ambiente `dev` e publica as alterações na stack a cada mudança. Veja [Implantação](/developers/operations/deployment).
+
+## Testes
+
+```bash
+pnpm test
+```
+
+Executa dois projetos do Vitest:
+
+- o do frontend, com jsdom e Testing Library;
+- o de Node, com os testes de `packages`, `services` e `scripts`.
+
+Esses testes não precisam de Docker nem de credenciais AWS.
+
+### Testes de integração com o DynamoDB Local
+
+```bash
+docker compose up -d dynamodb
+pnpm dynamodb:setup
+pnpm test:dynamodb
+```
+
+| Passo | O que faz |
+| --- | --- |
+| `docker compose up -d dynamodb` | Sobe o DynamoDB Local na porta 8000, em memória. |
+| `pnpm dynamodb:setup` | Cria a tabela local a partir da definição em `infra/template.yaml`. É idempotente. |
+| `pnpm test:dynamodb` | Executa os arquivos `*.dynamodb.spec.ts`. |
+
+Como a tabela local é criada a partir do template, as chaves e o índice são os mesmos da tabela real.
+
+O banco roda em memória. Reiniciar o contêiner apaga os dados, e é preciso executar `pnpm dynamodb:setup` de novo.
+
+Esses testes cobrem o que os repositórios falsos não cobrem: expressões condicionais, transações, concorrência e isolamento entre fotógrafos.
+
+### Qualidade
+
+```bash
+pnpm lint
+pnpm format:check
+pnpm typecheck
+```
+
+O CI executa esses três comandos, os dois conjuntos de testes e o build do frontend. Veja `.github/workflows/ci.yml`.
+
+## Usuário de teste
+
+```bash
+pnpm create:test-user
+```
+
+O script cria um usuário no Cognito e o confirma com `AdminConfirmSignUp`. A confirmação dispara o gatilho `PostConfirmation`, que cria o perfil no DynamoDB, como no cadastro pela aplicação.
+
+Ele lê os parâmetros de variáveis de ambiente:
+
+| Variável | Conteúdo |
+| --- | --- |
+| `COGNITO_USER_POOL_ID` | Id do User Pool da stack |
+| `COGNITO_USER_POOL_CLIENT_ID` | Id do App Client da stack |
+| `TEST_USER_EMAIL` | E-mail do usuário a criar |
+| `TEST_USER_NAME` | Nome do usuário |
+| `TEST_USER_PASSWORD` | Senha, dentro da política do pool |
+
+O perfil AWS em uso precisa da permissão `cognito-idp:AdminConfirmSignUp` no pool.
+
+<Warning>
+  Não escreva a senha na linha de comando nem em arquivos. Leia-a com `read -rs TEST_USER_PASSWORD`, exporte a variável e remova-a com `unset` depois do uso. O `README.md` do repositório `lumora` traz a sequência completa.
+</Warning>
+
+Use um e-mail novo a cada execução: o script não sobrescreve usuários existentes. Execute `pnpm create:test-user --help` para os detalhes.
+
+## O que só se valida na stack real
+
+Os testes locais simulam o SDK da AWS ou usam o DynamoDB Local. Eles **não** validam:
+
+- o JWT authorizer e os scopes;
+- as políticas IAM das funções;
+- o CORS da API e do bucket;
+- a policy do presigned POST;
+- a entrega dos eventos do S3 para a fila;
+- o gatilho do Cognito;
+- o binário do sharp na arquitetura da Lambda.
+
+O repositório não usa LocalStack. O `README.md` registra o motivo: ele emularia justamente os pontos que precisam ser validados contra o comportamento real.
+
+## Divergências do `README.md`
+
+O `README.md` do repositório `lumora` cita comandos e artefatos que não existem atualmente: `pnpm process:local`, os scripts `verify-event`, `generate-fixtures` e `delete-event`, testes com Playwright e o perfil AWS `photos-dev`. Use os comandos desta página, que correspondem ao `package.json` e ao `samconfig.toml` atuais.

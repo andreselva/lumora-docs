@@ -1,0 +1,46 @@
+---
+title: "Decisões arquiteturais"
+description: "Registro das decisões que moldam o Lumora: o contexto, a escolha e as consequências de cada uma."
+sidebarTitle: "Índice"
+---
+
+Um ADR (Architecture Decision Record) registra **por que** uma decisão foi tomada. O código mostra o que foi feito; o ADR preserva o contexto e os trade-offs, que não aparecem no código.
+
+## Decisões registradas
+
+| ADR | Decisão | Status |
+| --- | --- | --- |
+| [001](/developers/adr/001-dynamodb-single-table) | DynamoDB em tabela única, com o dono na chave | Aceita |
+| [002](/developers/adr/002-cognito-jwt-authorizer) | Cognito e JWT authorizer para o fotógrafo | Aceita |
+| [003](/developers/adr/003-lambdas-by-context) | Lambdas agrupadas por contexto | Aceita |
+| [004](/developers/adr/004-ports-and-repositories) | Portas e repositórios entre domínio e infraestrutura | Aceita |
+| [005](/developers/adr/005-presigned-post-upload) | Upload direto ao S3 com presigned POST | Aceita |
+| [006](/developers/adr/006-s3-sqs-lambda-processing) | Processamento por S3, SQS e Lambda | Aceita |
+| [007](/developers/adr/007-processing-lease-and-pinned-version) | Lease de processamento e versão fixada do original | Aceita |
+| [008](/developers/adr/008-derivatives-per-attempt) | Derivados em uma pasta por tentativa | Aceita |
+| [009](/developers/adr/009-derived-photo-counters) | Contadores de fotos derivados na leitura | Aceita |
+
+## Origem destes registros
+
+Estes ADRs foram escritos a partir do código e da seção "Decisões de base" do `README.md` do repositório `lumora`, que numera as decisões como D1, D2 e assim por diante. Cada ADR indica a decisão de origem.
+
+Só foram registradas decisões **confirmadas no código atual**. Onde o `README.md` descreve algo diferente do que está implementado, o ADR segue o código e aponta a diferença.
+
+Decisões do `README.md` que ainda não têm implementação não viraram ADR. É o caso de pagamentos (D11), downloads por URL assinada (D12), a separação em três buckets (D6) e o token de galeria para clientes (parte de D8).
+
+## Formato
+
+Cada ADR tem as seções:
+
+- **Status**: Proposta, Aceita ou Substituída.
+- **Contexto**: o problema que existia.
+- **Decisão**: o que foi escolhido.
+- **Consequências**: benefícios, custos e trade-offs.
+- **Alternativas**: apenas quando registradas no repositório ou evidentes no código.
+
+## Como registrar uma nova decisão
+
+1. Crie `developers/adr/NNN-titulo-curto.mdx`, com o próximo número.
+2. Use o formato acima.
+3. Adicione a página ao grupo **Decisões arquiteturais** em `docs.json` e à tabela desta página.
+4. Se a decisão substituir outra, mude o status da anterior para "Substituída por ADR-NNN". Não apague o ADR antigo.

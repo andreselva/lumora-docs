@@ -1,0 +1,50 @@
+---
+title: "ADR-005 — Upload direto ao S3 com presigned POST"
+description: "O navegador envia os arquivos direto ao S3 com um formulário POST assinado, que fixa chave, tipo e tamanho."
+sidebarTitle: "005 — Presigned POST"
+---
+
+## Status
+
+Aceita. Origem: decisão D9 do `README.md` do repositório `lumora`.
+
+## Contexto
+
+Um fotógrafo envia centenas ou milhares de JPEGs de até 50 MB por evento. Fazer esses arquivos passarem pela API esbarra nos limites do Lambda e do API Gateway para tamanho de corpo e tempo de execução, e cobraria computação por byte transferido.
+
+O envio precisa ser direto ao S3. Mas uma credencial entregue ao navegador precisa ser restrita: o cliente não pode escolher onde gravar, o tipo do arquivo ou o tamanho.
+
+## Decisão
+
+- A API registra a foto e devolve um **presigned POST**, válido por 15 minutos.
+- O navegador envia o arquivo como formulário multipart direto ao S3.
+- A policy do POST fixa a chave exata, o `Content-Type` e o tamanho exato, por `content-length-range` com mínimo e máximo iguais.
+- São aceitos apenas JPEGs de até 50 MB, em pedidos de até 50 arquivos.
+- A chegada do arquivo é confirmada pelo evento do S3, nunca por uma chamada do cliente.
+- O mesmo arquivo é reconhecido por um fingerprint de nome, tamanho e data de modificação, o que torna o pedido de upload idempotente e o envio retomável.
+
+### Por que POST e não PUT
+
+O motivo registrado no `README.md` é a policy: a de um presigned POST é avaliada pelo próprio S3 e impõe a chave exata, o `Content-Type` e o intervalo de tamanho (`content-length-range`).
+
+## Consequências
+
+**Benefícios**
+
+- Nenhum byte de foto passa por uma Lambda da API.
+- O que chega ao bucket tem a chave, o tipo e o tamanho que a API autorizou. O S3 recusa o resto.
+- Sem um endpoint de "upload concluído", não existe estado em que o cliente afirma algo que o servidor não verificou.
+- A retomada não exige estado no cliente: selecionar os mesmos arquivos de novo é suficiente.
+
+**Custos**
+
+- O frontend precisa de um agendador próprio para pedir tickets aos poucos, tratar expiração e repetir falhas. Essa lógica é o `UploadManager`.
+- O bucket precisa de CORS para a origem do frontend.
+- A notificação do S3 filtra `ObjectCreated:Post`. Originais gravados por outro método não são processados.
+- O POST pode ser reutilizado dentro da validade. Isso exigiu versionamento do bucket e a fixação da versão no processamento. Veja o [ADR-007](/developers/adr/007-processing-lease-and-pinned-version).
+- O fingerprint não prova igualdade de conteúdo. Um arquivo reexportado com o mesmo nome é tratado como novo, e dois arquivos diferentes com os mesmos três atributos são tratados como iguais.
+- A policy valida tamanho e tipo declarado, e não o conteúdo. A verificação de que o arquivo é mesmo um JPEG fica para o processador.
+
+## Alternativas
+
+O `README.md` registra que upload multipart pré-assinado só seria considerado se o produto passasse a aceitar RAW ou TIFF.

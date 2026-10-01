@@ -1,72 +1,101 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "Lumora",
+  "description": "Documentação do Lumora: guia de uso para fotógrafos e documentação técnica para desenvolvedores.",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#654A8D",
+    "light": "#BDA8DE",
+    "dark": "#543B79"
   },
   "favicon": "/favicon.svg",
-  "navigation": {
-    "pages": [
-      {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
   "logo": {
     "light": "/logo/light.svg",
     "dark": "/logo/dark.svg"
   },
-  "navbar": {
-    "links": [
+  "navigation": {
+    "tabs": [
       {
-        "label": "Support",
-        "href": "mailto:support@mintlify.com"
+        "tab": "Guia do usuário",
+        "groups": [
+          {
+            "group": "Primeiros passos",
+            "pages": ["user/index", "user/getting-started/account"]
+          },
+          {
+            "group": "Eventos",
+            "pages": ["user/events/manage-events"]
+          },
+          {
+            "group": "Galerias",
+            "pages": ["user/galleries/organize-galleries"]
+          },
+          {
+            "group": "Fotos",
+            "pages": [
+              "user/photos/upload-photos",
+              "user/photos/track-processing",
+              "user/photos/upload-problems"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Desenvolvedores",
+        "groups": [
+          {
+            "group": "Introdução",
+            "pages": ["developers/index", "developers/limitations"]
+          },
+          {
+            "group": "Arquitetura",
+            "pages": [
+              "developers/architecture/overview",
+              "developers/architecture/frontend",
+              "developers/architecture/backend",
+              "developers/architecture/infrastructure",
+              "developers/architecture/data-model"
+            ]
+          },
+          {
+            "group": "Fluxos",
+            "pages": [
+              "developers/flows/authentication",
+              "developers/flows/account-bootstrap",
+              "developers/flows/events-and-galleries",
+              "developers/flows/photo-upload",
+              "developers/flows/image-processing"
+            ]
+          },
+          {
+            "group": "Decisões arquiteturais",
+            "pages": [
+              "developers/adr/index",
+              "developers/adr/001-dynamodb-single-table",
+              "developers/adr/002-cognito-jwt-authorizer",
+              "developers/adr/003-lambdas-by-context",
+              "developers/adr/004-ports-and-repositories",
+              "developers/adr/005-presigned-post-upload",
+              "developers/adr/006-s3-sqs-lambda-processing",
+              "developers/adr/007-processing-lease-and-pinned-version",
+              "developers/adr/008-derivatives-per-attempt",
+              "developers/adr/009-derived-photo-counters"
+            ]
+          },
+          {
+            "group": "Operação",
+            "pages": [
+              "developers/operations/local-development",
+              "developers/operations/deployment",
+              "developers/operations/observability",
+              "developers/operations/troubleshooting"
+            ]
+          }
+        ]
       }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
     ]
   },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+  "contextual": {
+    "options": ["copy", "view"]
   }
 }
