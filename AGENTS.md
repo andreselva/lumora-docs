@@ -42,6 +42,8 @@
 - Quando algo não puder ser confirmado, diga isso na página ou não documente.
 - Não registre segredos, tokens, credenciais, ids de conta AWS, ids de recursos reais nem dados pessoais. Exemplos de chaves e ids são sempre fictícios.
 - Crie um ADR apenas para decisões confirmadas no código. Veja `developers/adr/index.mdx`.
+- Não trate automaticamente custos, trade-offs, invariantes ou riscos documentados em um ADR como bugs ou tarefas de correção. Primeiro determine se são consequências deliberadas da decisão, premissas que precisam ser preservadas ou defeitos demonstráveis no comportamento atual.
+- Ao propor correções a partir da documentação, diferencie explicitamente: **defeito atual**, **risco a verificar**, **trade-off aceito** e **consideração futura**. Não proponha remover uma garantia arquitetural sem identificar o mecanismo equivalente que preservaria suas invariantes.
 
 ## Validação
 
