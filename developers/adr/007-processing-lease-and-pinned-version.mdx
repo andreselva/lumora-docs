@@ -43,14 +43,30 @@ Coordenar o processamento com atributos no próprio item da foto, alterados por 
 - O processador não escreve no item do evento. Mil fotos concluindo em paralelo não disputam um mesmo item.
 - Um redrive da DLQ usa as mesmas condições de reivindicação e a mesma versão fixada. A retomada depende de a foto ainda permitir processamento e de a versão existir no S3.
 
-**Custos**
+**Natureza do trade-off**
 
-- O raciocínio é sutil. As condições de escrita concentram toda a correção e precisam de testes de concorrência, hoje em `DynamoDbPhotoRepository.dynamodb.spec.ts`.
-- Os três tempos estão em lugares diferentes: a constante `PROCESSING_LEASE_MS` no código e os outros dois no template. Alterar um sem os outros quebra as garantias sem erro aparente.
-- O lease não é renovado. Um processamento legítimo que durasse mais que 90 segundos perderia a posse. Hoje o timeout de 60 segundos torna isso impossível.
-- A recuperação de um worker morto espera o visibility timeout, de 6 minutos.
+O lease é uma complexidade deliberada do protocolo de processamento e, no modelo atual, faz parte das garantias de correção. Ele não representa dívida técnica a ser removida: fornece posse temporária, permite recuperação depois da morte de um worker e, junto de `processingAttemptId`, impede que uma tentativa antiga conclua depois que outra já assumiu.
+
+Os pontos abaixo registram trade-offs, invariantes e riscos que devem ser preservados ou reavaliados caso as premissas operacionais mudem.
+
+**Trade-offs aceitos**
+
+- O protocolo é mais sutil do que manter apenas `status = PROCESSING`. As condições de escrita concentram a correção e precisam de testes de concorrência, hoje em `DynamoDbPhotoRepository.dynamodb.spec.ts`.
+- Existe acoplamento temporal entre timeout da Lambda, duração do lease e visibility timeout da fila. Essa relação é intencional porque garante que um worker saudável termine antes de perder a posse e que uma mensagem reentregue encontre o lease anterior vencido.
+- A recuperação de um worker morto não é imediata. Ela depende da reentrega da mensagem pelo SQS após o visibility timeout; o lease não causa essa espera, apenas garante que a nova tentativa possa assumir quando a mensagem reaparecer.
+- A validade do lease é comparada com o relógio da invocação da Lambda. Esse relógio participa do protocolo e deve permanecer suficientemente consistente para a margem entre os tempos configurados.
+
+**Invariantes operacionais**
+
+- Deve permanecer verdadeira a relação `timeout da Lambda < lease < visibility timeout`. Hoje: 60 s < 90 s < 360 s.
+- O lease não é renovado porque, com o timeout atual de 60 segundos, um worker saudável não pode continuar executando depois dos 90 segundos de posse. Se essa premissa mudar, a duração ou a estratégia de renovação precisa ser reavaliada.
+- Os três tempos estão em lugares diferentes: `PROCESSING_LEASE_MS` no código e os outros dois no template. Alterar um exige revisar os demais em conjunto.
+- A conclusão deve continuar condicionada ao mesmo `processingAttemptId`, à mesma `sourceVersionId`, ao estado `PROCESSING` e a um lease ainda válido. Essas condições impedem que um worker antigo sobrescreva uma tentativa mais nova.
+
+**Riscos e custos associados**
+
 - O versionamento do bucket aumenta o armazenamento. Uma regra de lifecycle remove versões não correntes após 15 dias, inclusive uma versão fixada pelo processador. Redrives reiniciam a retenção das mensagens, mas não esse prazo. Veja [Redrive da DLQ](/developers/flows/image-processing#redrive-da-dlq).
-- A comparação do lease usa o relógio de cada invocação da Lambda.
+- Se o processamento futuro puder legitimamente ultrapassar o lease atual, o desenho sem renovação deixa de ser suficiente e precisa ser revisto antes de aumentar o timeout da Lambda.
 
 ## Implantação
 
