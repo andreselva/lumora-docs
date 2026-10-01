@@ -1,12 +1,14 @@
 ---
 title: "ADR-009 — Contadores de fotos derivados na leitura"
-description: "O progresso do processamento é contado a partir do estado das fotos, sem contadores armazenados no evento."
+description: "O progresso do processamento é contado a partir do estado das fotos, só no resumo de upload, sem contadores armazenados no evento."
 sidebarTitle: "009 — Contadores derivados"
 ---
 
 ## Status
 
 Aceita. Origem: decisão D10 do `README.md` do repositório `lumora`, regra "Contadores".
+
+Revisada para restringir a contagem derivada ao resumo de upload. Antes, a leitura genérica de eventos também derivava um `photoCount`. Veja [Revisão](#revisão).
 
 ## Contexto
 
@@ -19,13 +21,19 @@ A forma direta de servir esses números é manter contadores no item do evento, 
 
 O código guarda vestígios de um modelo anterior com contadores: os atributos `photoCount` e `pendingPhotoCount` ainda aparecem nas condições de exclusão do evento.
 
+Derivar a contagem tem um custo proporcional ao número de fotos. Esse custo só se justifica onde a tela mostra o progresso.
+
 ## Decisão
 
 Separar dois tipos de contador.
 
-**Contadores de progresso são derivados.** O resumo de upload e o `photoCount` devolvido pela API são calculados na leitura, com uma `Query` consistente e paginada sobre os itens `PHOTO#` do evento, projetando apenas `status`. O processador não escreve no evento.
+**Contadores de progresso são derivados, e só onde são necessários.** O resumo de upload (`GET /events/{eventId}/upload-summary`) é calculado na leitura, com uma `Query` consistente e paginada sobre os itens `PHOTO#` do evento, projetando apenas `status`. O processador não escreve no evento.
+
+**A leitura genérica de eventos não conta fotos.** Listar, ler e editar um evento usam só o item do evento. O contrato de evento não tem `photoCount` nem expõe `registeredPhotoCount`.
 
 **Contadores de invariante são armazenados.** `galleryCount` e `registeredPhotoCount` ficam no item do evento e são atualizados na mesma transação da escrita que contam. Eles existem para condicionar a exclusão do evento, e não para medir progresso.
+
+O atributo legado `photoCount` continua sendo gravado como 0 na criação do evento, porque a condição de exclusão exige o atributo. Nenhum código o lê ou atualiza.
 
 ## Consequências
 
@@ -34,12 +42,13 @@ Separar dois tipos de contador.
 - Cada foto conta exatamente uma vez. Não há como o número divergir do estado real.
 - Cada transição do processamento é um único `UpdateItem`, sem transação e sem disputa pelo item do evento.
 - Não há contador a corrigir depois de uma falha, nem necessidade de backfill.
+- O custo de `GET /events` depende dos eventos devolvidos, e não do total de fotos deles. Uma página de 20 eventos é uma única `Query`.
 
 **Custos**
 
-- O custo da leitura cresce com o número de fotos. Um evento com milhares de fotos exige várias páginas a cada consulta.
+- O custo do resumo cresce com o número de fotos. Um evento com milhares de fotos exige várias páginas a cada consulta.
 - O resumo é consultado a cada 5 segundos durante um envio. O custo se multiplica pelo número de consultas.
-- `GET /events` calcula o `photoCount` de cada evento da página. Uma página de 20 eventos dispara ao menos 20 consultas adicionais.
+- A API de eventos não informa quantas fotos um evento tem. A tela não sabe de antemão se um evento tem fotos.
 - As páginas de uma contagem não formam um retrato único no tempo. Uma foto que muda de estado durante a leitura pode ser contada no estado antigo ou no novo. A consulta seguinte corrige.
 - `registeredPhotoCount` só aumenta. Como não há exclusão de fotos, um evento que já recebeu uma foto não volta a ser excluível.
 
@@ -48,3 +57,11 @@ Separar dois tipos de contador.
 O `README.md` registra a alternativa descartada: contadores no evento com `ADD` a cada transição, com "janela de falha entre estado e contador".
 
 Uma contagem por índice ou por agregados incrementais não está registrada no repositório. Fica como consideração futura caso o custo da leitura se torne relevante.
+
+Expor `registeredPhotoCount` no contrato de evento, para substituir o `photoCount`, foi descartado. Ele conta fotos registradas, incluindo as que ainda aguardam arquivo, e existe para proteger a exclusão.
+
+## Revisão
+
+A primeira versão desta decisão também derivava o `photoCount` devolvido por `GET /events`, `GET /events/{eventId}` e `PATCH /events/{eventId}`. Cada evento convertido para o domínio disparava uma contagem completa das suas fotos. Uma página de 20 eventos custava ao menos 20 consultas adicionais, e editar o nome de um evento percorria todas as fotos dele.
+
+O `photoCount` foi removido do domínio, do contrato da API e do frontend. A contagem derivada ficou restrita ao resumo de upload.

@@ -19,7 +19,6 @@ Os itens estão em quatro grupos:
 | Item | Situação |
 | --- | --- |
 | Exclusão de fotos | A tela marca fotos e chama `POST .../photos/delete`. A rota não existe na API nem no template. `IPhotoStorage.deletePhoto` existe, mas a implementação no S3 é vazia. |
-| Exclusão de evento | A API exclui eventos vazios. A tela bloqueia qualquer evento com `galleryCount` maior que 0, e todo evento novo tem `galleryCount` igual a 1. Na prática, a tela nunca chama a API. Os testes da tela usam `galleryCount` igual a 0. |
 | Exclusão de galeria | A API implementa. Não há controle na tela. |
 | Publicar e arquivar evento | Implementado na entidade e no repositório. Sem caso de uso, rota ou tela. Todo evento permanece em `DRAFT`. |
 | Pausar e retomar o envio | Implementado no `UploadManager` e exposto pelo hook. Nenhum componente chama. |
@@ -45,7 +44,8 @@ Os itens estão em quatro grupos:
 
 | Item | Situação |
 | --- | --- |
-| Evento com fotos nunca é excluível | `registeredPhotoCount` só aumenta, e não há exclusão de fotos. |
+| Evento com fotos nunca é excluível | `registeredPhotoCount` só aumenta, e não há exclusão de fotos. A tela oferece a exclusão e só mostra a recusa depois da resposta da API. |
+| Evento com galeria adicional não é excluível pela tela | A exclusão exige remover as galerias adicionais antes, e a tela não tem controle para excluir galerias. |
 | Exclusão de galeria sem cascata | A API exclui a galeria sem verificar nem remover suas fotos e fingerprints. |
 | `expiresAt` sem efeito | O valor é armazenado e editável. Nenhum código o usa. |
 | Edição sem controle de versão | Edições simultâneas de evento ou galeria seguem "a última escrita vence". |
@@ -57,7 +57,6 @@ Os itens estão em quatro grupos:
 | Item | Situação |
 | --- | --- |
 | Contagem por evento | O resumo de upload percorre todas as fotos do evento a cada consulta, a cada 5 segundos durante um envio. |
-| `photoCount` na listagem | `GET /events` faz uma contagem completa para cada evento da página. |
 | Listagem de galerias | Sem paginação na resposta. |
 
 Veja o [ADR-009](/developers/adr/009-derived-photo-counters).

@@ -136,9 +136,14 @@ O usuário existe no Cognito, mas não tem perfil no DynamoDB. A página **Minha
 
 ### A tela não deixa excluir um evento
 
-`DeleteEventDialog` bloqueia a exclusão quando `galleryCount` é maior que 0. Todo evento atual tem `galleryCount` igual a 1. Veja [Limitações](/developers/limitations#limitações-atuais).
+Só evento vazio é excluído: sem galerias além da principal, sem fotos registradas e sem pedidos.
 
-A API aceita a exclusão de um evento que tenha só a galeria principal e nenhuma foto registrada.
+`DeleteEventDialog` sempre oferece a exclusão. Quando o diálogo passa a mostrar **Não é possível excluir este evento** depois da confirmação, a API respondeu 409 `EVENT_NOT_EMPTY`. As causas:
+
+- **Galeria adicional.** A tela não tem controle para excluir galerias.
+- **Fotos registradas**, incluindo fotos abandonadas em `PENDING_UPLOAD`. `registeredPhotoCount` só aumenta, então esse evento não volta a ser excluível.
+
+Veja [Limitações](/developers/limitations#limitações-atuais).
 
 ### A exclusão de fotos falha
 

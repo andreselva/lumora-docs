@@ -44,7 +44,7 @@ Atualmente `expiresAt` é apenas armazenado. Nenhum código o consulta para muda
 
 A lista devolve 20 eventos por página, em ordem decrescente de chave, com `nextCursor` quando há mais. Para eventos com ULID, essa ordem aproxima os mais recentes primeiro. Veja os limites em [Modelo de dados](/developers/architecture/data-model#padrões-de-acesso).
 
-Em ambas as rotas, o `photoCount` de cada evento é calculado na leitura, percorrendo as fotos do evento. Veja o custo no [ADR-009](/developers/adr/009-derived-photo-counters).
+As duas rotas leem só o item do evento. Elas não consultam as fotos, e a resposta não traz contagem de fotos. O custo de `GET /events` depende dos eventos devolvidos: uma página é uma única `Query`. A contagem por estado fica no resumo de upload. Veja o [ADR-009](/developers/adr/009-derived-photo-counters).
 
 ## Editar um evento
 
@@ -54,7 +54,7 @@ Em ambas as rotas, o `photoCount` de cada evento é calculado na leitura, percor
 
 **Garantias e limites:**
 
-- A resposta reflete o item como ficou nessa escrita, sem uma leitura posterior.
+- A resposta reflete o item como ficou nessa escrita, sem uma leitura posterior. A edição é um único comando no DynamoDB, qualquer que seja o número de fotos do evento.
 - A edição é permitida em qualquer `status`.
 - Não há controle de versão. Duas edições simultâneas do mesmo campo seguem a regra "a última escrita vence".
 
@@ -82,8 +82,11 @@ A exclusão do evento é condicionada, na mesma transação, a:
 
 - `galleryCount` igual a 1;
 - `registeredPhotoCount` igual a 0 ou ausente;
-- `photoCount` e `orderCount` iguais a 0;
-- `pendingPhotoCount`, um contador legado, igual a 0 ou ausente.
+- `orderCount` igual a 0;
+- `photoCount`, um contador legado, igual a 0;
+- `pendingPhotoCount`, outro contador legado, igual a 0 ou ausente.
+
+Eventos novos são criados com `photoCount` igual a 0 só para satisfazer essa condição. Quem protege um evento com fotos é `registeredPhotoCount`.
 
 **Garantia:** as condições são avaliadas na escrita. Um upload registrado entre a consulta e a exclusão incrementa `registeredPhotoCount` e faz a transação falhar.
 
@@ -102,9 +105,9 @@ Responder 204 a um evento ausente torna a operação segura para repetição. O 
 - Não há exclusão em cascata. Galerias adicionais precisam ser removidas antes.
 - Como `registeredPhotoCount` só aumenta e não existe exclusão de fotos, um evento que já recebeu qualquer foto não pode ser excluído.
 
-<Warning>
-  A tela atual impede a exclusão antes de chamar a API. `DeleteEventDialog` considera que o evento tem conteúdo quando `galleryCount` é maior que 0, e todo evento novo tem `galleryCount` igual a 1 por causa da galeria principal. Os testes da tela usam um evento com `galleryCount` igual a 0, que a API atual não produz. Veja [Limitações](/developers/limitations#limitações-atuais).
-</Warning>
+**Na tela:** `DeleteEventDialog` não infere se o evento está vazio. O diálogo sempre oferece a exclusão e chama a API. Se o evento tiver conteúdo, a API responde 409 `EVENT_NOT_EMPTY`, e o diálogo passa a explicar a recusa e deixa de oferecer a exclusão.
+
+A regra de "evento vazio" existe só na API, avaliada na escrita. A tela não a duplica.
 
 ## Criar uma galeria
 

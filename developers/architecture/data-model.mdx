@@ -102,7 +102,7 @@ Todas as listagens são `Query`. Não há `Scan` em nenhum repositório.
 | `archivedAt` | `NULL` até o evento ser arquivado |
 | `galleryCount` | Número de galerias. Começa em 1, por causa da galeria principal. |
 | `registeredPhotoCount` | Número de fotos já registradas no evento. Protege a exclusão. |
-| `photoCount` | Contador legado, gravado como 0. Veja a seção sobre contadores. |
+| `photoCount` | Contador legado, gravado como 0. Não sai na API. Veja a seção sobre contadores. |
 | `orderCount` | Gravado como 0. Não há pedidos implementados. |
 
 ### Galeria
@@ -170,9 +170,9 @@ Há dois tipos de contador, com propósitos diferentes.
 
 Eles existem para que a exclusão do evento possa ser condicionada a "nenhuma galeria extra, nenhuma foto", na própria escrita.
 
-**Contadores de progresso** não são armazenados. O resumo de upload e o `photoCount` devolvido pela API são calculados na leitura, percorrendo as fotos do evento e contando por `status`.
+**Contadores de progresso** não são armazenados. O resumo de upload é calculado na leitura, percorrendo as fotos do evento e contando por `status`. Só essa rota faz a contagem: listar, ler e editar um evento usam apenas o item do evento.
 
-O atributo `photoCount` do item do evento é legado. Ele continua sendo gravado como 0 e continua nas condições de exclusão, mas a API ignora o valor armazenado e devolve o valor derivado: fotos em `AVAILABLE`, `FAILED` e `ARCHIVED`.
+O atributo `photoCount` do item do evento é legado. Ele continua sendo gravado como 0 e continua nas condições de exclusão, mas nenhum código o lê ou atualiza, e o contrato de evento não tem esse campo. `registeredPhotoCount` também não sai na API.
 
 A decisão e o custo dela estão no [ADR-009](/developers/adr/009-derived-photo-counters).
 
