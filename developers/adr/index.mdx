@@ -32,10 +32,14 @@ Decisões do `README.md` que ainda não têm implementação não viraram ADR. �
 
 Cada ADR tem as seções:
 
+Um custo ou trade-off registrado em um ADR não implica, por si só, dívida técnica ou defeito. ADRs também documentam complexidade deliberada necessária para preservar garantias do sistema. Uma correção só deve ser proposta quando houver comportamento incorreto, uma invariante violada, evidência de risco material ou mudança das premissas que sustentam a decisão.
+
+Cada ADR tem as seções:
+
 - **Status**: Proposta, Aceita ou Substituída.
 - **Contexto**: o problema que existia.
 - **Decisão**: o que foi escolhido.
-- **Consequências**: benefícios, custos e trade-offs.
+- **Consequências**: benefícios, trade-offs aceitos, invariantes operacionais e riscos ou custos associados, conforme fizer sentido para a decisão.
 - **Alternativas**: apenas quando registradas no repositório ou evidentes no código.
 
 ## Como registrar uma nova decisão
