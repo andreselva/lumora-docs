@@ -134,7 +134,7 @@ Em vez disso, ele mantém uma **reserva** pequena de tickets prontos:
 
 Assim o envio não para à espera de tickets, e cada ticket é usado pouco depois de emitido.
 
-Os arquivos são ordenados por nome em ordem natural antes de entrar na fila. Como a API cria as fotos na ordem do pedido e os ids são ULIDs, a ordem da galeria acompanha a ordem dos nomes.
+Cada seleção de arquivos é ordenada por nome em ordem natural antes de ser acrescentada à fila. A API registra as fotos sequencialmente dentro de cada pedido, mas a galeria é listada por ULID, não por nome. Seleções posteriores e retries podem alterar a ordem de registro, e `ulid()` não garante a sequência entre ids gerados no mesmo milissegundo.
 
 ## Falhas e recuperação
 
@@ -206,18 +206,18 @@ O limite de estagnação existe porque `PENDING_UPLOAD` também conta fotos de l
 O limite depende do que ainda está pendente:
 
 - **3 minutos** quando há fotos em `PROCESSING`;
-- **1 minuto** quando só restam fotos em `PENDING_UPLOAD`. Sem envio local e sem nada em processamento, um original que tivesse chegado já teria mudado de estado.
+- **1 minuto** quando só restam fotos em `PENDING_UPLOAD`. É uma heurística para lotes abandonados, não uma confirmação de ausência do original. O arquivo pode estar no S3 enquanto a entrega do evento ou a reivindicação está atrasada ou falhando.
 
 Quando a contagem de `AVAILABLE` muda, o hook invalida as listas de fotos do evento, para a grade buscar as novas miniaturas.
 
 ### Listagem e miniaturas
 
-`GET /events/{eventId}/galleries/{galleryId}/photos` devolve 24 fotos por página, em ordem de registro. Para cada foto, a API gera uma URL assinada de leitura da miniatura, válida por 10 minutos.
+`GET /events/{eventId}/galleries/{galleryId}/photos` devolve 24 fotos por página, em ordem crescente de ULID. Para cada foto, a API gera uma URL assinada de leitura da miniatura, válida por 10 minutos.
 
 A chave da miniatura depende de `completedAttemptId`, a tentativa que concluiu o processamento.
 
 <Note>
-  Atualmente a URL de miniatura é gerada para toda foto, inclusive as que estão em `PENDING_UPLOAD`, `PROCESSING` ou `FAILED`, cujo arquivo de miniatura não existe. O frontend recebe uma URL que o S3 recusa. Veja [Limitações](/developers/limitations#limitações-atuais).
+  Atualmente a URL de miniatura é gerada para toda foto, sem verificar o estado nem a existência do derivado. Quando o objeto não existe, o S3 recusa o acesso. Uma foto em `FAILED` pode ter miniatura se a geração da preview falhou depois de a miniatura ser gravada. Veja [Limitações](/developers/limitations#limitações-atuais).
 </Note>
 
 ## Onde olhar no código

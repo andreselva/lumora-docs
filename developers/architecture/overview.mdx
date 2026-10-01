@@ -149,4 +149,4 @@ Estes princípios aparecem em várias partes do código e explicam muitas decis�
 3. **Arquivos não passam pela API.** A `studio-api` só emite credenciais. O `imageProcessor` é a única função que lê os bytes de uma foto.
 4. **Escritas que mudam estado são condicionais.** Transições usam `ConditionExpression`, de modo que repetir uma operação não a aplica duas vezes.
 5. **Chaves do S3 não usam o nome original do arquivo.** O nome fica apenas no DynamoDB.
-6. **Respostas da API não expõem chaves do S3 nem o `ownerId`.** A conversão para DTO remove esses campos.
+6. **DTOs de evento, galeria e foto omitem campos internos.** A conversão não inclui campos explícitos de `ownerId` nem chaves do S3. Os tickets de upload e as URLs assinadas expõem os caminhos necessários ao acesso, que contêm o identificador do fotógrafo. Isso não é uma garantia de sigilo desses identificadores.

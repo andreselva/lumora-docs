@@ -58,28 +58,30 @@ A mensagem volta para a fila. Na reentrega, a reivindicação é recusada se a f
 
 ### Mensagens na DLQ
 
-O alarme `PhotoProcessingDlqAlarm` dispara com uma mensagem visível na DLQ. Cada mensagem corresponde a uma foto parada em `PROCESSING`.
+O alarme `PhotoProcessingDlqAlarm` dispara com uma mensagem visível na DLQ. Isso não determina o estado da foto. Uma falha anterior à reivindicação pode deixá-la em `PENDING_UPLOAD`; depois de uma reivindicação aplicada, ela pode ficar em `PROCESSING`. Uma mensagem inválida pode nem identificar uma foto.
 
 <Steps>
   <Step title="Identifique a foto">
-    Leia a mensagem na DLQ. O corpo é um evento do S3, e a chave do objeto contém os ids do evento, da galeria e da foto.
+    Leia a mensagem na DLQ. Se o corpo for um evento válido do S3, a chave do objeto contém os ids do evento, da galeria e da foto. Consulte o estado persistido. Se o corpo for inválido, procure os logs pelo `messageId`.
   </Step>
   <Step title="Encontre a causa">
     Consulte os logs do `imageProcessor` pelo `photoId`. Veja as [consultas úteis](/developers/operations/observability#consultas-úteis).
   </Step>
   <Step title="Corrija a causa">
-    Uma falha de permissão, de configuração ou um defeito de código precisa ser corrigido antes do redrive. Caso contrário as mensagens voltam para a DLQ.
+    Uma falha de permissão, de configuração ou um defeito de código precisa ser corrigido antes do redrive. Confira também se a versão fixada em `sourceVersionId` ainda existe no S3. O processador não troca essa versão por outra. Caso a causa persista, as mensagens podem voltar para a DLQ.
   </Step>
   <Step title="Faça o redrive">
-    Mova as mensagens da DLQ de volta para a fila principal, pelo console do SQS ou pela AWS CLI. O processador retoma a mesma versão do original.
+    Após corrigir a causa, mova as mensagens válidas da DLQ de volta para a fila principal, pelo console do SQS ou pela AWS CLI. O processador aplica as condições de reivindicação novamente. Fotos já concluídas não são reprocessadas; fotos com versão fixada só podem retomar essa versão.
   </Step>
 </Steps>
 
-A DLQ retém mensagens por 14 dias. Depois disso a mensagem se perde, e a foto permanece em `PROCESSING` sem nenhum gatilho que a retome.
+A DLQ tem retenção configurada de 14 dias. Em filas standard, o tempo na fila principal conta nesse prazo; não são 14 dias adicionais após a chegada à DLQ. Quando a mensagem expira, ela é removida sem alterar o registro da foto. Uma foto pendente pode ficar sem gatilho de retomada. Veja a [documentação de retenção do SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html).
+
+O redrive reinicia a retenção da mensagem, mas não a expiração da versão do S3. Por isso, redrives sucessivos não garantem que o original continue disponível. Veja [Redrive da DLQ](/developers/flows/image-processing#redrive-da-dlq).
 
 ### Miniaturas quebradas na galeria
 
-A API gera uma URL assinada de miniatura para toda foto listada, inclusive as que ainda não têm miniatura. Para fotos em `PENDING_UPLOAD`, `PROCESSING` ou `FAILED`, o S3 recusa a URL e o navegador mostra a imagem como quebrada.
+A API gera uma URL assinada de miniatura para toda foto listada, sem verificar se o objeto existe. Quando ele não existe, o S3 recusa o acesso e o navegador mostra a imagem como quebrada. Isso afeta fotos pendentes e muitas fotos com falha. Uma foto em `FAILED` pode ter miniatura se a falha ocorreu ao gerar a preview, depois da gravação da miniatura.
 
 É uma limitação conhecida. Veja [Limitações](/developers/limitations#limitações-atuais).
 
@@ -104,7 +106,7 @@ O frontend filtra os arquivos antes de pedir tickets. Um 400 nessa rota indica q
 
 ### A API responde 409 `CONFLICT`
 
-Uma transação foi cancelada por conflito com outra, mesmo depois de 3 repetições. Nada foi gravado. Repetir a requisição é seguro.
+Uma transação foi cancelada por conflito com outra, mesmo depois de 3 repetições. Nenhum item dessa transação foi gravado. Em um lote de uploads, transações anteriores podem já ter registrado fotos. Repetir o pedido de uploads é seguro porque o fingerprint reaproveita esses registros.
 
 ## API e autenticação
 

@@ -42,7 +42,7 @@ Atualmente `expiresAt` é apenas armazenado. Nenhum código o consulta para muda
 
 **Entrada:** `GET /events` e `GET /events/{eventId}`.
 
-A lista devolve 20 eventos por página, do mais recente para o mais antigo, com `nextCursor` quando há mais.
+A lista devolve 20 eventos por página, em ordem decrescente de chave, com `nextCursor` quando há mais. Para eventos com ULID, essa ordem aproxima os mais recentes primeiro. Veja os limites em [Modelo de dados](/developers/architecture/data-model#padrões-de-acesso).
 
 Em ambas as rotas, o `photoCount` de cada evento é calculado na leitura, percorrendo as fotos do evento. Veja o custo no [ADR-009](/developers/adr/009-derived-photo-counters).
 
@@ -147,6 +147,6 @@ A recusa da galeria principal acontece duas vezes: na entidade e na condição d
 
 Transações concorrentes sobre os mesmos itens podem ser canceladas pelo DynamoDB com `TransactionConflict`. O helper `sendTransaction` repete até 3 vezes, com backoff e jitter.
 
-Se o conflito persistir, a API responde 409 `CONFLICT`, com a mensagem de que outra alteração está em andamento. Nada foi gravado, e o cliente pode repetir.
+Se o conflito persistir, a API responde 409 `CONFLICT`, com a mensagem de que outra alteração está em andamento. A transação cancelada não grava nenhum dos seus itens, e o cliente pode repetir. Isso não desfaz transações anteriores da mesma requisição: em um lote de uploads, algumas fotos podem já ter sido registradas antes do conflito.
 
 O caso mais provável são requisições simultâneas de registro de fotos no mesmo evento, por exemplo a partir de duas galerias, já que cada registro atualiza `registeredPhotoCount` no mesmo item.

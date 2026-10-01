@@ -34,7 +34,7 @@ Os itens estão em quatro grupos:
 | URL de miniatura para fotos sem miniatura | `ListGalleryPhotos` gera URL assinada para toda foto, em qualquer estado. Para fotos sem derivado, a URL aponta para um objeto inexistente. O comentário em `toPhotoDto` indica a intenção de devolver `null` nesses casos. |
 | Fotos em `FAILED` não têm recuperação | Não há reprocessamento. Selecionar o mesmo arquivo devolve `upload: null`, por causa do fingerprint. |
 | Fotos em `PENDING_UPLOAD` abandonadas | Não há expiração nem limpeza. Elas continuam contando no resumo e em `registeredPhotoCount`. |
-| Fotos em `PROCESSING` após a DLQ | Só um redrive manual as retoma. Depois de 14 dias a mensagem se perde. |
+| Mensagens na DLQ | Sem recuperação automática. O redrive depende da correção da causa e da existência da versão do original. A expiração da mensagem não altera o estado da foto. |
 | Derivados órfãos | Tentativas interrompidas deixam arquivos em `attempts/{attemptId}/`. Não há limpeza. |
 | Preview não utilizada | É gerada e gravada, mas nenhuma rota a serve. |
 | Só JPEG | RAW, TIFF, PNG e HEIC são recusados. |
@@ -96,12 +96,13 @@ Os itens abaixo são consequências deduzidas da leitura do código e da configu
 
 ### Versão fixada e expiração de versões não correntes
 
-O processador fixa em `sourceVersionId` a primeira versão do original. Se o mesmo ticket for usado para um segundo envio, essa versão passa a ser não corrente, e a regra de lifecycle a remove após 15 dias.
+O processador fixa em `sourceVersionId` a primeira versão do original a reivindicar a foto. Se o mesmo ticket for usado para um segundo envio, uma das duas versões fica não corrente, e a regra de lifecycle a remove após 15 dias.
 
-Consequências possíveis:
+O lease permite reivindicar novamente a mesma versão, mas não impede que ela expire no S3. A retenção de 14 dias da DLQ também não garante sua existência: segundo a [documentação do SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-configure-dead-letter-queue-redrive.html), o redrive reinicia a retenção da mensagem. Redrives sucessivos podem manter a mensagem além do prazo da versão não corrente.
 
-- o objeto que permanece como `original.jpeg` seria uma versão que nunca foi validada pelo processador;
-- um reprocessamento posterior, que lê pela versão fixada, não encontraria o original.
+Se a versão fixada tiver sido removida, a leitura por `VersionId` falha. O código trata essa falha como transitória e não substitui `sourceVersionId`. Uma foto ainda em `PROCESSING` pode continuar sem conclusão mesmo após o redrive. Esse cenário foi inferido do código e da configuração; não foi reproduzido na AWS.
+
+Há também uma questão de integridade do original guardado: se a versão fixada for a mais antiga, o objeto que permanece como `original.jpeg` pode ser outra versão, que o processador não leu. A policy do POST exige o mesmo tamanho e tipo declarado, mas não o mesmo conteúdo. O retry do `UploadManager` reutiliza o mesmo arquivo; a credencial, por si só, não garante essa igualdade. Uma futura entrega do original precisará considerar a versão que gerou os derivados.
 
 ### Confirmação de uma entrega duplicada
 

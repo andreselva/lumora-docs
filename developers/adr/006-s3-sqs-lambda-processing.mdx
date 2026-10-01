@@ -29,7 +29,7 @@ O processamento precisa de um ponto que absorva essas rajadas, limite a concorr�
 
 - A fila absorve rajadas. O teto de concorrência protege o DynamoDB e a conta.
 - O retry é da infraestrutura: uma falha passageira é repetida sem código próprio.
-- Mensagens que esgotam as tentativas ficam preservadas na DLQ, por 14 dias, para investigação e redrive.
+- Mensagens que esgotam os recebimentos permitidos ficam na DLQ para investigação e redrive, até o limite de retenção de 14 dias contado do enfileiramento original na fila standard.
 - O processador tem memória, tempo e permissões próprios, sem afetar a API.
 - O filtro de sufixo impede que os derivados gravados pelo processador gerem novos eventos.
 
@@ -38,7 +38,7 @@ O processamento precisa de um ponto que absorva essas rajadas, limite a concorr�
 - A fila standard entrega **pelo menos uma vez** e sem ordem. O processador precisa ser idempotente, o que levou ao [ADR-007](/developers/adr/007-processing-lease-and-pinned-version).
 - O resultado não é imediato. O frontend precisa consultar o estado, hoje por polling.
 - Uma falha transitória só é repetida após o visibility timeout, de 360 segundos. A recuperação de uma foto leva minutos.
-- Uma foto cuja mensagem foi para a DLQ fica em `PROCESSING` até um redrive manual.
+- A ida à DLQ não altera o estado da foto. Ela pode estar em `PENDING_UPLOAD`, em `PROCESSING` ou já concluída; uma mensagem inválida pode nem identificar uma foto. Não há recuperação automática da DLQ.
 - Com lote de 1, cada foto é uma invocação. Simplifica o tratamento de falha, ao custo de mais invocações.
 
 ## Alternativas

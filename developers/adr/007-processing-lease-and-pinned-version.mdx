@@ -41,7 +41,7 @@ Coordenar o processamento com atributos no próprio item da foto, alterados por 
 - Uma duplicata custa uma escrita condicional recusada. Nenhuma leitura no S3.
 - Não há serviço de lock nem tabela auxiliar. O estado da coordenação mora com a foto.
 - O processador não escreve no item do evento. Mil fotos concluindo em paralelo não disputam um mesmo item.
-- Um redrive da DLQ retoma a mesma versão, sem regra especial.
+- Um redrive da DLQ usa as mesmas condições de reivindicação e a mesma versão fixada. A retomada depende de a foto ainda permitir processamento e de a versão existir no S3.
 
 **Custos**
 
@@ -49,7 +49,7 @@ Coordenar o processamento com atributos no próprio item da foto, alterados por 
 - Os três tempos estão em lugares diferentes: a constante `PROCESSING_LEASE_MS` no código e os outros dois no template. Alterar um sem os outros quebra as garantias sem erro aparente.
 - O lease não é renovado. Um processamento legítimo que durasse mais que 90 segundos perderia a posse. Hoje o timeout de 60 segundos torna isso impossível.
 - A recuperação de um worker morto espera o visibility timeout, de 6 minutos.
-- O versionamento do bucket aumenta o armazenamento. Uma regra de lifecycle remove versões não correntes após 15 dias.
+- O versionamento do bucket aumenta o armazenamento. Uma regra de lifecycle remove versões não correntes após 15 dias, inclusive uma versão fixada pelo processador. Redrives reiniciam a retenção das mensagens, mas não esse prazo. Veja [Redrive da DLQ](/developers/flows/image-processing#redrive-da-dlq).
 - A comparação do lease usa o relógio de cada invocação da Lambda.
 
 ## Implantação

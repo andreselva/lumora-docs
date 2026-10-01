@@ -99,7 +99,7 @@ Há um alarme, `PhotoProcessingDlqAlarm`.
 | Dados ausentes | Tratados como normais |
 | Ação | Publica em um tópico SNS |
 
-O alarme indica que ao menos uma foto esgotou as tentativas de processamento e está parada em `PROCESSING`.
+O alarme indica ao menos uma mensagem visível na DLQ. Ele não determina o estado de uma foto: a falha pode ter ocorrido antes da reivindicação ou até ao interpretar a mensagem. Consulte os logs e o registro persistido para o diagnóstico.
 
 <Warning>
   O template cria o tópico SNS, mas nenhuma assinatura. Sem um assinante, o alarme muda de estado e ninguém é avisado. Assine o tópico da saída `PhotoProcessingAlarmTopicArn`.
@@ -111,8 +111,8 @@ O que fazer quando o alarme dispara está em [Solução de problemas](/developer
 
 O resumo de upload, `GET /events/{eventId}/upload-summary`, é também uma ferramenta de diagnóstico. Ele mostra, por evento, quantas fotos estão em cada estado:
 
-- `PENDING_UPLOAD` que não diminui indica originais que não chegaram ao S3, ou eventos que não chegaram à fila;
-- `PROCESSING` que não diminui indica falhas transitórias repetidas ou mensagens na DLQ;
+- `PENDING_UPLOAD` que não diminui pode indicar originais ausentes, atraso na entrega dos eventos ou falhas antes de a reivindicação ser aplicada;
+- `PROCESSING` que não diminui pode indicar falhas transitórias repetidas ou ausência de uma nova tentativa, inclusive por mensagens na DLQ;
 - `FAILED` indica arquivos rejeitados por conteúdo.
 
 ## O que não existe

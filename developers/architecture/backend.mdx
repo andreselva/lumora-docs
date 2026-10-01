@@ -44,7 +44,9 @@ Atende todas as rotas HTTP do fotógrafo. O roteamento é um `switch` sobre `eve
 
 As dependências são montadas no escopo do módulo, fora da função `handler`: clientes da AWS, repositórios e casos de uso são criados uma vez por ambiente de execução e reaproveitados entre invocações.
 
-O `handler` envolve o roteamento em um `try/catch` que é o **único** lugar onde erros viram respostas HTTP:
+O `handler` envolve o roteamento em um `try/catch` que centraliza a conversão de exceções em respostas HTTP. Controllers também retornam 404 diretamente para ids inválidos, e `getMe` faz o mesmo quando o perfil não existe.
+
+As exceções são mapeadas assim:
 
 | Erro | Status | `code` |
 | --- | --- | --- |
@@ -149,9 +151,9 @@ A decisão e suas consequências estão no [ADR-004](/developers/adr/004-ports-a
 
 Padrões que se repetem nas implementações DynamoDB:
 
-- **Chaves em um só lugar.** `repositories/dynamodb/keys.ts` monta todas as chaves de partição e ordenação.
-- **Leitura validada.** Cada item lido passa por um schema zod antes de virar entidade. Um item fora do formato lança erro em vez de produzir uma entidade inválida.
-- **Leituras consistentes.** As leituras usam `ConsistentRead: true`, com exceção da consulta de perfil em `GET /me`.
+- **Helpers de chaves.** `repositories/dynamodb/keys.ts` reúne os formatos de chave de evento, galeria, foto e fingerprint. O repositório de perfil e parte do repositório de eventos ainda montam suas chaves diretamente.
+- **Leitura validada.** Itens de evento, galeria e foto passam por schemas zod antes de virar entidades. O repositório de perfil verifica manualmente a presença de `id` e `email`; a contagem de fotos valida o `status` lido.
+- **Leituras consistentes.** Eventos, galerias e fotos usam `ConsistentRead: true`. A leitura de perfil em `GET /me` e a consulta inicial do bootstrap usam `false`. Após perder uma corrida de criação, o bootstrap relê o perfil com consistência forte.
 - **Escritas condicionais.** Criações usam `attribute_not_exists`; alterações e exclusões usam `attribute_exists` mais as condições da regra.
 - **Erro de condição vira erro de domínio.** Os repositórios pedem `ReturnValuesOnConditionCheckFailure: ALL_OLD` e inspecionam o item devolvido para distinguir "não existe" de "regra violada" e de "já aplicado".
 - **Transações com retry restrito.** `transactions.ts` repete uma transação até 3 vezes, com backoff e jitter, somente quando o cancelamento foi por `TransactionConflict`. Falhas de condição e erros de rede não são repetidos.
@@ -188,7 +190,7 @@ Três testes em `scripts` protegem contra divergência: `event-contract-parity.t
 
 ## Identificadores
 
-Eventos, galerias e fotos recebem um ULID, gerado no caso de uso. Como o ULID é ordenável pelo tempo, a ordem das chaves no DynamoDB coincide com a ordem de criação.
+Eventos, galerias e fotos recebem um ULID, gerado no caso de uso. As listagens usam a ordem das chaves no DynamoDB. O timestamp do ULID aproxima essa ordem da criação, mas `ulid()` não é monotônico: ids gerados no mesmo milissegundo não preservam necessariamente a sequência de chamadas. A ordenação também não representa o nome do arquivo.
 
 O identificador do fotógrafo é o `sub` do Cognito. A aplicação não gera um id próprio para ele.
 

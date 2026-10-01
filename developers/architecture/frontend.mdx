@@ -87,9 +87,9 @@ Todo dado do servidor passa pelo TanStack Query. A configuração global, em `ma
 
 Cada operação tem um hook em `studio/hooks`, por exemplo `useEvents`, `useEvent`, `useEventGalleries` e `useGalleryPhotos`.
 
-### O `sub` faz parte de toda query key
+### O `sub` identifica as queries de dados do fotógrafo
 
-As chaves seguem o formato `['studio', recurso, sub, ...ids]`. Incluir o `sub` do usuário impede que dados em cache de uma sessão apareçam em outra, no mesmo navegador.
+As chaves de dados do fotógrafo seguem o formato `['studio', recurso, sub, ...ids]`. Incluir o `sub` do usuário impede que dados em cache de uma sessão apareçam em outra, no mesmo navegador. A consulta de saúde usa `['health']`, sem `sub`, porque não retorna dados do fotógrafo.
 
 O logout, em `StudioLayout`, reforça isso em três passos:
 
@@ -131,7 +131,7 @@ Essa separação evita que cada evento de progresso re-renderize o painel inteir
 | --- | --- |
 | Pool de envios | Até 4 envios simultâneos ao S3. Cada vaga pega o próximo arquivo assim que termina o anterior. |
 | Tickets sob demanda | Os presigned POSTs são pedidos em lotes de 8, apenas quando a reserva cai a 4 ou menos. Nunca para a fila inteira, para que não expirem. |
-| Ordem natural | Os arquivos são ordenados por nome com `Intl.Collator` numérico. |
+| Ordem natural | Cada seleção é ordenada por nome com `Intl.Collator` numérico antes de ser acrescentada à fila. Isso não ordena a grade da galeria por nome. |
 | Retry automático | Falhas de rede e respostas 5xx são repetidas até 3 tentativas, com backoff exponencial e jitter. |
 | Renovação de ticket | Um 403 do S3 faz o manager pedir um novo ticket, uma única vez. |
 | Progresso agregado | Os eventos de progresso do XHR são acumulados e emitidos no máximo a cada 100 ms. |

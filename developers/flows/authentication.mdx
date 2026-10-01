@@ -92,7 +92,7 @@ O teste `studioApi.isolation.dynamodb.spec.ts` exercita esse isolamento contra o
 
 O frontend trata a troca de usuário no mesmo navegador como um risco:
 
-- todas as query keys incluem o `sub`;
+- as query keys de dados do fotógrafo incluem o `sub`; a consulta de saúde usa `['health']`, sem dados pessoais;
 - `useMe` recusa uma resposta de `/me` cujo `id` seja diferente do `sub` da sessão;
 - `useBootstrapMe` confere o usuário ativo de novo antes de gravar o resultado no cache;
 - o logout cancela as queries, encerra a sessão, limpa o cache e descarta as filas de upload.

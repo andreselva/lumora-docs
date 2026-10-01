@@ -78,8 +78,10 @@ Os repositórios de galeria ainda conferem o atributo `ownerId` do item como seg
 
 Duas escolhas de ordenação seguem dos ULIDs:
 
-- A `SK` do evento termina no ULID, que é ordenável pelo tempo. Ler em ordem decrescente devolve os eventos mais recentes primeiro.
-- A `SK` da foto traz a galeria **antes** do id da foto. Um único `begins_with` devolve as fotos de uma galeria, em ordem de registro.
+- A `SK` do evento termina no ULID. A listagem usa a ordem decrescente dessa chave.
+- A `SK` da foto traz a galeria **antes** do id da foto. Um único `begins_with` devolve as fotos de uma galeria, em ordem crescente de ULID.
+
+Essa ordenação aproxima a ordem de criação, mas não a garante entre ids gerados no mesmo milissegundo: o código usa `ulid()`, sem geração monotônica. As fotos não são ordenadas por nome na consulta. Eventos legados com UUID também não seguem a ordenação temporal dos ULIDs.
 
 Todas as listagens são `Query`. Não há `Scan` em nenhum repositório.
 

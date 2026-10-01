@@ -249,10 +249,10 @@ Vale também para a ordem inversa: a primeira versão a reivindicar vence, seja 
 
 ### Redrive da DLQ
 
-Uma mensagem reprocessada dias depois carrega o mesmo `versionId`. Se a foto ainda está em `PROCESSING` com essa versão, a reivindicação é aceita e o processamento é retomado.
+Uma mensagem reprocessada dias depois carrega o mesmo `versionId`. Se a foto ainda está em `PROCESSING` com essa versão e o lease venceu, a reivindicação pode ser aceita. Para concluir o processamento, a versão fixada ainda precisa existir no S3.
 
 <Warning>
-  Versões não correntes expiram em 15 dias. Se houve um segundo envio para a mesma chave, a versão fixada em `sourceVersionId` pode ter se tornado não corrente e ter sido removida. Um redrive depois desse prazo falharia ao ler o original. Essa consequência decorre da leitura da configuração; não há teste que a cubra.
+  A retenção de 14 dias da DLQ não garante a preservação do original. O redrive reinicia a retenção da mensagem, mas não o prazo de expiração de 15 dias da versão não corrente no S3. Redrives sucessivos podem manter a mensagem depois de a versão ter sido removida. Antes de retomar, confira a existência de `sourceVersionId`. A reinicialização da retenção é descrita na [documentação do SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-configure-dead-letter-queue-redrive.html).
 </Warning>
 
 ## Derivados
@@ -307,7 +307,9 @@ Se a própria gravação de `FAILED` falhar, o erro é propagado e a mensagem vo
 
 Qualquer outro erro: falha de rede, throttling, erro do S3 ou do DynamoDB, timeout da função.
 
-**Tratamento:** o erro é propagado. O handler inclui a mensagem em `batchItemFailures`. A foto **permanece em `PROCESSING`**.
+**Tratamento:** o erro é propagado. Quando consegue responder, o handler inclui a mensagem em `batchItemFailures`. Um timeout da função também deixa a mensagem para nova tentativa, sem resposta parcial.
+
+O estado depende de onde a falha ocorreu. Depois de uma reivindicação aplicada e antes da conclusão, a foto fica em `PROCESSING`. Se a reivindicação falhar antes de gravar, ela pode continuar em `PENDING_UPLOAD`. Se uma escrita de conclusão for aplicada e sua resposta se perder, a foto pode já estar no estado final. A falha, sozinha, não determina o estado persistido.
 
 ```mermaid
 flowchart TD
@@ -322,9 +324,9 @@ flowchart TD
 
 ### Depois da DLQ
 
-Uma mensagem na DLQ significa uma foto parada em `PROCESSING`. Não há mecanismo automático que a recupere ou a marque como `FAILED`.
+Uma mensagem na DLQ esgotou os recebimentos permitidos sem ser confirmada. Ela pode corresponder a uma foto em `PENDING_UPLOAD` ou `PROCESSING`, ou até falhar antes de identificar uma foto, como no caso de corpo inválido. Consulte a mensagem, os logs e o item persistido antes de decidir a recuperação. A entrada na DLQ não muda o estado da foto nem dispara recuperação automática.
 
-A DLQ retém mensagens por 14 dias. A recuperação é operacional: investigar a causa e fazer o redrive para a fila principal. Veja [Solução de problemas](/developers/operations/troubleshooting#mensagens-na-dlq).
+A DLQ tem retenção configurada de 14 dias. Na fila standard, a ida à DLQ preserva o timestamp de enfileiramento original, portanto o tempo já passado na fila principal conta nesse prazo. A recuperação é operacional: investigar a causa, verificar a versão do original e fazer o redrive para a fila principal. Veja [Solução de problemas](/developers/operations/troubleshooting#mensagens-na-dlq).
 
 No frontend, o polling desiste após 3 minutos sem mudança e mostra que há fotos ainda em processamento.
 
