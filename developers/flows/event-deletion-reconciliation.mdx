@@ -28,7 +28,7 @@ flowchart TD
   G --> E
   F -- não --> H[Remove a galeria]
   H --> I{Ainda há galerias?}
-  I -- sim --> D
+  I -- sim --> K[Esta cadeia termina; outras galerias continuam nas cadeias já publicadas]
   I -- não --> J[Marca tombstone DELETED]
 
   C -. próxima conferência .-> R[EventDeletionReconciler]
