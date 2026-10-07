@@ -20,15 +20,22 @@
         "groups": [
           {
             "group": "Primeiros passos",
-            "pages": ["user/index", "user/getting-started/account"]
+            "pages": [
+              "user/index",
+              "user/getting-started/account"
+            ]
           },
           {
             "group": "Eventos",
-            "pages": ["user/events/manage-events"]
+            "pages": [
+              "user/events/manage-events"
+            ]
           },
           {
             "group": "Galerias",
-            "pages": ["user/galleries/organize-galleries"]
+            "pages": [
+              "user/galleries/organize-galleries"
+            ]
           },
           {
             "group": "Fotos",
@@ -45,7 +52,10 @@
         "groups": [
           {
             "group": "Introdução",
-            "pages": ["developers/index", "developers/limitations"]
+            "pages": [
+              "developers/index",
+              "developers/limitations"
+            ]
           },
           {
             "group": "Arquitetura",
@@ -63,6 +73,7 @@
               "developers/flows/authentication",
               "developers/flows/account-bootstrap",
               "developers/flows/events-and-galleries",
+              "developers/flows/event-deletion-reconciliation",
               "developers/flows/photo-upload",
               "developers/flows/image-processing"
             ]
@@ -96,6 +107,9 @@
     ]
   },
   "contextual": {
-    "options": ["copy", "view"]
+    "options": [
+      "copy",
+      "view"
+    ]
   }
 }
