@@ -8,7 +8,7 @@ sidebarTitle: "009 — Contadores derivados"
 
 Aceita. Origem: decisão D10 do `README.md` do repositório `lumora`, regra "Contadores".
 
-Revisada para restringir a contagem derivada ao resumo de upload. Antes, a leitura genérica de eventos também derivava um `photoCount`. Veja [Revisão](#revisão).
+Revisada para restringir a contagem derivada ao resumo de upload. Antes, a leitura genérica de eventos também derivava um `photoCount`. Uma revisão posterior separou essa decisão da exclusão definitiva: `registeredPhotoCount` continua persistido, mas não impede excluir um evento com conteúdo. Veja [Revisão](#revisão).
 
 ## Contexto
 
@@ -19,7 +19,9 @@ A forma direta de servir esses números é manter contadores no item do evento, 
 - **Consistência.** Estado e contador são duas escritas. Para não divergirem, cada transição precisaria de uma transação entre a foto e o evento, ou aceitaria uma janela em que um mudou e o outro não.
 - **Contenção.** Com até 30 workers concluindo fotos do mesmo evento em paralelo, todos escreveriam no mesmo item.
 
-O código guarda vestígios de um modelo anterior com contadores: os atributos `photoCount` e `pendingPhotoCount` ainda aparecem nas condições de exclusão do evento.
+O código ainda mantém `registeredPhotoCount` no item do evento. Ele não é um contador operacional de progresso: é atualizado no registro e na exclusão definitiva das fotos e pode ser copiado para o tombstone como retrato informativo.
+
+O atributo `photoCount` é legado e continua sendo gravado como 0 na criação do evento. Ele não participa da exclusão atual. `pendingPhotoCount` pertence a um modelo anterior e não orienta o fluxo atual.
 
 Derivar a contagem tem um custo proporcional ao número de fotos. Esse custo só se justifica onde a tela mostra o progresso.
 
@@ -31,9 +33,11 @@ Separar dois tipos de contador.
 
 **A leitura genérica de eventos não conta fotos.** Listar, ler e editar um evento usam só o item do evento. O contrato de evento não tem `photoCount` nem expõe `registeredPhotoCount`.
 
-**Contadores de invariante são armazenados.** `galleryCount` e `registeredPhotoCount` ficam no item do evento e são atualizados na mesma transação da escrita que contam. Eles existem para condicionar a exclusão do evento, e não para medir progresso.
+**Contadores persistidos continuam separados dos contadores de progresso.** `galleryCount` acompanha as galerias do evento. `registeredPhotoCount` acompanha fotos registradas: o registro incrementa o valor e a exclusão definitiva de fotos o decrementa. Nenhum dos dois é usado para impedir a exclusão definitiva do evento.
 
-O atributo legado `photoCount` continua sendo gravado como 0 na criação do evento, porque a condição de exclusão exige o atributo. Nenhum código o lê ou atualiza.
+A exclusão de evento segue a decisão D17: o evento pode ser removido mesmo com conteúdo. `DynamoDbEventRepository.delete` cria um tombstone `EVENT_DELETION` e a limpeza de galerias e fotos continua de forma assíncrona. Os contadores copiados para o tombstone são informativos e não funcionam como precondição da exclusão.
+
+O atributo legado `photoCount` continua sendo gravado como 0 na criação do evento. Nenhum código o lê ou atualiza.
 
 ## Consequências
 
@@ -50,7 +54,7 @@ O atributo legado `photoCount` continua sendo gravado como 0 na criação do eve
 - O resumo é consultado a cada 5 segundos durante um envio. O custo se multiplica pelo número de consultas.
 - A API de eventos não informa quantas fotos um evento tem. A tela não sabe de antemão se um evento tem fotos.
 - As páginas de uma contagem não formam um retrato único no tempo. Uma foto que muda de estado durante a leitura pode ser contada no estado antigo ou no novo. A consulta seguinte corrige.
-- `registeredPhotoCount` só aumenta. Como não há exclusão de fotos, um evento que já recebeu uma foto não volta a ser excluível.
+- `registeredPhotoCount` exige uma escrita adicional no item do evento durante registro e exclusão definitiva de fotos. Ele não substitui a contagem derivada por estado e não bloqueia a exclusão do evento.
 
 ## Alternativas
 
@@ -58,10 +62,12 @@ O `README.md` registra a alternativa descartada: contadores no evento com `ADD` 
 
 Uma contagem por índice ou por agregados incrementais não está registrada no repositório. Fica como consideração futura caso o custo da leitura se torne relevante.
 
-Expor `registeredPhotoCount` no contrato de evento, para substituir o `photoCount`, foi descartado. Ele conta fotos registradas, incluindo as que ainda aguardam arquivo, e existe para proteger a exclusão.
+Expor `registeredPhotoCount` no contrato de evento, para substituir o `photoCount`, foi descartado. Ele conta fotos registradas, incluindo as que ainda aguardam arquivo, mas não representa o estado operacional do processamento. Por isso não substitui o resumo derivado por `status`.
 
 ## Revisão
 
 A primeira versão desta decisão também derivava o `photoCount` devolvido por `GET /events`, `GET /events/{eventId}` e `PATCH /events/{eventId}`. Cada evento convertido para o domínio disparava uma contagem completa das suas fotos. Uma página de 20 eventos custava ao menos 20 consultas adicionais, e editar o nome de um evento percorria todas as fotos dele.
 
 O `photoCount` foi removido do domínio, do contrato da API e do frontend. A contagem derivada ficou restrita ao resumo de upload.
+
+Depois da implementação da exclusão definitiva com conteúdo, os contadores persistidos deixaram de participar da decisão "pode excluir o evento?". O fluxo atual remove o item ativo, grava um tombstone `EVENT_DELETION` e delega a limpeza para workers e para o reconciliador. `registeredPhotoCount` permanece útil como contagem de registros e como informação do snapshot, mas não como trava de exclusão.
