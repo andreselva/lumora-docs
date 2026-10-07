@@ -441,7 +441,7 @@ Depois de reenfileirar, <code>rescheduleDeletionReconcile</code>:
 - grava <code>lastReconciledAt</code>;
 - incrementa <code>reconcileAttempts</code>.
 
-A função agendada continua rodando a cada 15 minutos, mas o tombstone só volta a ser elegível quando <code>GSI1SK <= agora</code>.
+A função agendada continua rodando a cada 15 minutos, mas o tombstone só volta a ser elegível quando `GSI1SK <= agora`.
 
 Portanto, "reconferir em 1 hora" significa **tornar elegível em 1 hora**. A execução efetiva acontece no primeiro tick de 15 minutos que encontrar o tombstone vencido.
 
