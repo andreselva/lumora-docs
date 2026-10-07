@@ -7,13 +7,14 @@ A maior parte dos fluxos de eventos e galerias é síncrona e passa pela `studio
 
 ## Invariantes
 
-Três regras orientam esses fluxos:
+Duas regras orientam os fluxos de criação e CRUD:
 
 1. **Todo evento tem exatamente uma galeria principal.** Ela nasce com o evento e só sai com ele.
 2. **A galeria principal não é excluída pelo CRUD de galerias.**
-3. **Só um evento vazio pode ser excluído.**
 
-As três são garantidas na própria escrita, por transação e condição, e não por leitura seguida de escrita.
+As duas são garantidas na própria escrita, por transação e condição, e não por leitura seguida de escrita.
+
+A exclusão definitiva do evento é um fluxo separado e assíncrono. Ela não exige que o evento esteja vazio; a confirmação explícita inicia a remoção das galerias e fotos.
 
 ## Criar um evento
 
