@@ -44,8 +44,6 @@ Os itens estão em quatro grupos:
 
 | Item | Situação |
 | --- | --- |
-| Evento com fotos nunca é excluível | `registeredPhotoCount` só aumenta, e não há exclusão de fotos. A tela oferece a exclusão e só mostra a recusa depois da resposta da API. |
-| Evento com galeria adicional não é excluível pela tela | A exclusão exige remover as galerias adicionais antes, e a tela não tem controle para excluir galerias. |
 | Exclusão de galeria sem cascata | A API exclui a galeria sem verificar nem remover suas fotos e fingerprints. |
 | `expiresAt` sem efeito | O valor é armazenado e editável. Nenhum código o usa. |
 | Edição sem controle de versão | Edições simultâneas de evento ou galeria seguem "a última escrita vence". |
@@ -72,7 +70,6 @@ Veja o [ADR-009](/developers/adr/009-derived-photo-counters).
 | Nome fixo da tabela | Impede duas stacks na mesma conta e região. |
 | Alarme sem assinante | O tópico SNS não tem assinatura no template. |
 | Observabilidade mínima | Sem métricas próprias, tracing, dashboard ou alarmes de erro. |
-| `GSI1` sem uso | Declarado na tabela, sem escrita nem leitura. |
 | CORS da API aberto | Aceita qualquer origem. |
 | Miniaturas sem CDN | Servidas por URL assinada do S3, válida por 10 minutos. |
 
@@ -129,7 +126,6 @@ Itens que o código ou os documentos do repositório apontam como evolução pos
 - **Separar buckets.** O `README.md` descreve buckets distintos para originais e para mídia, com a mídia atrás de um CDN.
 - **Dividir o template.** O `README.md` sugere nested stacks quando o template passar de cerca de mil linhas.
 - **Controle de versão em edições.** O `README.md` sugere um atributo `version` caso edições concorrentes passem a causar perda de dados.
-- **Exclusão de evento com conteúdo.** O `README.md` deixa em aberto se a exclusão deve remover o conteúdo, arquivar ou continuar recusando.
 - **Limpeza de derivados órfãos.** O `README.md` menciona a limpeza futura de arquivos de tentativas interrompidas.
 - **Contagem mais barata.** Caso o custo da contagem derivada se torne relevante. Veja o [ADR-009](/developers/adr/009-derived-photo-counters).
 - **Região.** O `README.md` registra como pendência validar a escolha de `us-east-1` sob a LGPD.

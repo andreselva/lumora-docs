@@ -134,16 +134,20 @@ O usuário existe no Cognito, mas não tem perfil no DynamoDB. A página **Minha
 
 ## Exclusões
 
-### A tela não deixa excluir um evento
+### A exclusão de um evento não termina
 
-Só evento vazio é excluído: sem galerias além da principal, sem fotos registradas e sem pedidos.
+Eventos com fotos ou galerias adicionais podem ser excluídos. O caminho síncrono remove o item ativo do evento e inicia a limpeza assíncrona do conteúdo.
 
-`DeleteEventDialog` sempre oferece a exclusão. Quando o diálogo passa a mostrar **Não é possível excluir este evento** depois da confirmação, a API respondeu 409 `EVENT_NOT_EMPTY`. As causas:
+Se a limpeza não convergir:
 
-- **Galeria adicional.** A tela não tem controle para excluir galerias.
-- **Fotos registradas**, incluindo fotos abandonadas em `PENDING_UPLOAD`. `registeredPhotoCount` só aumenta, então esse evento não volta a ser excluível.
+- confira o tombstone `EVENT_DELETION#<eventId>`; `DELETING` indica que ainda existe trabalho pendente;
+- confira a `DeletePhotosGalleryQueueDLQ`; mensagens visíveis indicam páginas que esgotaram as tentativas da fila;
+- consulte os logs de `DeletePhotosGalleryFunction` para falhas no worker;
+- consulte os logs de `EventDeletionReconcilerFunction` por `Limpeza de evento parada; galerias reenfileiradas`.
 
-Veja [Limitações](/developers/limitations#limitações-atuais).
+O reconciliador verifica exclusões vencidas periodicamente e reenfileira apenas as galerias que deixaram de avançar. Ele não depende de recuperar a mensagem morta da DLQ.
+
+Veja [Reconciliação da exclusão de eventos](/developers/flows/event-deletion-reconciliation).
 
 ### A exclusão de fotos falha
 

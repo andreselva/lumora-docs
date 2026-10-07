@@ -67,7 +67,7 @@ Para cada arquivo, em ordem, o caso de uso `RequestPhotoUploads`:
 | --- | --- | --- |
 | `Put` do fingerprint | não existir | Impede registrar o mesmo arquivo duas vezes na galeria. |
 | `Put` da foto | não existir | Cria o registro. |
-| `Update` do evento, `ADD registeredPhotoCount 1` | evento existir | Impede a exclusão de um evento com fotos. |
+| `Update` do evento, `ADD registeredPhotoCount 1` | evento existir | Mantém o contador de fotos registradas e impede registrar em evento já removido. |
 | `ConditionCheck` da galeria | galeria existir | Impede registrar foto em galeria inexistente ou de outro fotógrafo. |
 
 Os quatro efeitos são atômicos. Se qualquer condição falhar, nada é gravado.
@@ -172,7 +172,7 @@ O lote não é atômico. A API processa os arquivos em sequência, e uma falha n
 - **Um arquivo, uma foto por galeria.** O fingerprint e a transação impedem duplicatas, mesmo com pedidos repetidos ou simultâneos.
 - **O que foi autorizado é o que chega.** Chave, tipo e tamanho são fixados pela policy do POST e conferidos de novo pelo processador.
 - **Nada é dado como pronto pelo cliente.** O estado da foto só avança por evento do S3.
-- **Evento com fotos não é excluído.** `registeredPhotoCount` é incrementado na mesma transação do registro.
+- **O registro exige que o evento ainda exista.** `registeredPhotoCount` é incrementado na mesma transação; a exclusão definitiva posterior pode remover o evento mesmo com fotos e limpar o conteúdo de forma assíncrona.
 
 ## O que o fluxo não garante
 

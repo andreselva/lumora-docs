@@ -83,7 +83,7 @@ Gatilho do Cognito. Cria o perfil do fotógrafo após a confirmação do cadastr
 | `POST /events` | `CreateEvent` |
 | `GET /events/{eventId}` | `GetEvent` |
 | `PATCH /events/{eventId}` | `UpdateEventDetails` |
-| `DELETE /events/{eventId}` | `DeleteEvent` |
+| `POST /events/{eventId}/delete` | `DeleteEvent` — exige `{ confirmation: "compreendo, excluir evento definitivamente" }` |
 | `GET /events/{eventId}/upload-summary` | `GetEventUploadSummary` |
 | `GET /events/{eventId}/galleries` | `ListGalleries` |
 | `POST /events/{eventId}/galleries` | `CreateGallery` |
