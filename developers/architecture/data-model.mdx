@@ -13,7 +13,7 @@ As chaves são montadas em `services/api/src/repositories/dynamodb/keys.ts`.
 | --- | --- |
 | Chave de partição | `PK`, string |
 | Chave de ordenação | `SK`, string |
-| Índice global | `GSI1`, com `GSI1PK` e `GSI1SK`, projeção completa. Atualmente sem uso. |
+| Índice global | `GSI1`, com `GSI1PK` e `GSI1SK`, projeção completa. A exclusão de eventos usa a partição esparsa `EVENT_DELETION#PENDING` para localizar reconciliações vencidas. |
 | TTL | Não configurado |
 | Modo de capacidade | Sob demanda |
 
@@ -101,7 +101,7 @@ Todas as listagens são `Query`. Não há `Scan` em nenhum repositório.
 | `createdAt`, `expiresAt` | Instantes em ISO 8601, UTC |
 | `archivedAt` | `NULL` até o evento ser arquivado |
 | `galleryCount` | Número de galerias. Começa em 1, por causa da galeria principal. |
-| `registeredPhotoCount` | Número de fotos já registradas no evento. Protege a exclusão. |
+| `registeredPhotoCount` | Número de fotos já registradas no evento. É mantido durante o registro e copiado para o tombstone como informação da exclusão. |
 | `photoCount` | Contador legado, gravado como 0. Não sai na API. Veja a seção sobre contadores. |
 | `orderCount` | Gravado como 0. Não há pedidos implementados. |
 
@@ -155,7 +155,7 @@ Cinco operações gravam mais de um item e usam `TransactWriteItems`:
 | Criar galeria | galeria e `galleryCount` do evento | A galeria só é criada se o evento existir. |
 | Excluir galeria | galeria e `galleryCount` do evento | A galeria principal não é excluída. |
 | Registrar foto | fingerprint, foto, `registeredPhotoCount` do evento e verificação da galeria | Um arquivo é registrado uma vez por galeria, e só em galeria existente. |
-| Excluir evento | evento e galeria principal | Só evento vazio é excluído. |
+| Excluir evento | evento ativo e tombstone `EVENT_DELETION` | A remoção visível do evento e o registro da limpeza pendente acontecem atomicamente. |
 
 As transições do processamento, ao contrário, usam um único `UpdateItem` condicional sobre a foto, sem transação e sem tocar no evento.
 
@@ -163,16 +163,16 @@ As transições do processamento, ao contrário, usam um único `UpdateItem` con
 
 Há dois tipos de contador, com propósitos diferentes.
 
-**Contadores que protegem invariantes** são atributos do evento, atualizados na mesma transação que a escrita que eles contam:
+**Contadores persistidos** são atributos do evento atualizados junto com as escritas que eles contam:
 
 - `galleryCount`, incrementado e decrementado com as galerias;
 - `registeredPhotoCount`, incrementado a cada foto registrada.
 
-Eles existem para que a exclusão do evento possa ser condicionada a "nenhuma galeria extra, nenhuma foto", na própria escrita.
+A exclusão definitiva não usa esses contadores para recusar eventos com conteúdo. `DynamoDbEventRepository.delete` lê o item atual, copia esses valores para o tombstone como retrato informativo e inicia a limpeza assíncrona.
 
 **Contadores de progresso** não são armazenados. O resumo de upload é calculado na leitura, percorrendo as fotos do evento e contando por `status`. Só essa rota faz a contagem: listar, ler e editar um evento usam apenas o item do evento.
 
-O atributo `photoCount` do item do evento é legado. Ele continua sendo gravado como 0 e continua nas condições de exclusão, mas nenhum código o lê ou atualiza, e o contrato de evento não tem esse campo. `registeredPhotoCount` também não sai na API.
+O atributo `photoCount` do item do evento é legado. Ele continua sendo gravado como 0, mas não participa da exclusão atual, e o contrato de evento não tem esse campo. `registeredPhotoCount` também não sai na API.
 
 A decisão e o custo dela estão no [ADR-009](/developers/adr/009-derived-photo-counters).
 
@@ -192,7 +192,6 @@ Um cursor de outro fotógrafo, de outro evento ou de outra galeria é recusado c
 
 O código contém tolerâncias a formatos anteriores, sinal de que o modelo mudou enquanto já havia dados:
 
-- A exclusão de evento aceita eventos sem galeria principal (`galleryCount` igual a 0) e considera o atributo antigo `pendingPhotoCount`.
 - A reivindicação de processamento aceita fotos em `PROCESSING` sem `processingLeaseUntil`.
 - A leitura de derivados aceita fotos sem `completedAttemptId`, cujos arquivos ficam direto na pasta da foto, sem `attempts/`.
 - A validação de ids de evento aceita UUID, além de ULID.
