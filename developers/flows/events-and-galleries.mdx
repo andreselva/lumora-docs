@@ -3,7 +3,7 @@ title: "Eventos e galerias"
 description: "Criação, edição, listagem e exclusão de eventos e galerias, com as invariantes que as transações protegem."
 ---
 
-Eventos e galerias são os fluxos síncronos do Lumora. Todos passam pela `studio-api` e pelo DynamoDB, sem fila e sem S3.
+A maior parte dos fluxos de eventos e galerias é síncrona e passa pela `studio-api` e pelo DynamoDB. A exclusão de evento é a exceção: ela inicia uma limpeza assíncrona de galerias e fotos, com SQS, workers e reconciliação.
 
 ## Invariantes
 
@@ -70,44 +70,15 @@ A entidade `Event` e o `DynamoDbEventRepository` implementam as transições `pu
 
 ## Excluir um evento
 
-**Entrada:** `DELETE /events/{eventId}`.
+**Entrada:** `POST /events/{eventId}/delete`, com a confirmação literal exigida por `DeleteEventInputSchema`.
 
-**Sequência:**
+A exclusão é definitiva e pode começar mesmo quando o evento ainda possui galerias e fotos. O caminho síncrono da API remove o item ativo do evento, cria um tombstone `EVENT_DELETION` em `DELETING`, lista as galerias e publica uma mensagem `GALLERY` para cada uma. A resposta HTTP não espera a remoção física de todo o conteúdo.
 
-1. O repositório consulta até duas galerias do evento.
-2. Se houver mais de uma, ou se a única não for a principal, lança `EventNotEmptyError`.
-3. Caso contrário, executa uma transação que exclui o evento e a galeria principal.
+A limpeza posterior é feita por `DeletePhotosGalleryFunction` em páginas de até 250 fotos. Cada página remove objetos do S3 e registros do DynamoDB; quando há continuação, o worker publica a próxima mensagem na mesma fila. Ao terminar uma galeria, ela é removida. A última galeria pode concluir o tombstone do evento em `DELETED`.
 
-A exclusão do evento é condicionada, na mesma transação, a:
+O tombstone entra na GSI1 sob `EVENT_DELETION#PENDING`. Se a limpeza deixar de avançar, `EventDeletionReconcilerFunction` detecta galerias sem progresso, reenfileira o trabalho sem depender do cursor antigo e mantém backoff entre novas tentativas.
 
-- `galleryCount` igual a 1;
-- `registeredPhotoCount` igual a 0 ou ausente;
-- `orderCount` igual a 0;
-- `photoCount`, um contador legado, igual a 0;
-- `pendingPhotoCount`, outro contador legado, igual a 0 ou ausente.
-
-Eventos novos são criados com `photoCount` igual a 0 só para satisfazer essa condição. Quem protege um evento com fotos é `registeredPhotoCount`.
-
-**Garantia:** as condições são avaliadas na escrita. Um upload registrado entre a consulta e a exclusão incrementa `registeredPhotoCount` e faz a transação falhar.
-
-**Respostas:**
-
-| Situação | Resposta |
-| --- | --- |
-| Evento vazio excluído | 204 |
-| Evento inexistente, já excluído ou de outro fotógrafo | 204, sem alterar nada |
-| Evento com conteúdo | 409 `EVENT_NOT_EMPTY` |
-
-Responder 204 a um evento ausente torna a operação segura para repetição. O caso típico é a nova tentativa depois de um timeout em que a exclusão já tinha sido aplicada.
-
-**Limites:**
-
-- Não há exclusão em cascata. Galerias adicionais precisam ser removidas antes.
-- Como `registeredPhotoCount` só aumenta e não existe exclusão de fotos, um evento que já recebeu qualquer foto não pode ser excluído.
-
-**Na tela:** `DeleteEventDialog` não infere se o evento está vazio. O diálogo sempre oferece a exclusão e chama a API. Se o evento tiver conteúdo, a API responde 409 `EVENT_NOT_EMPTY`, e o diálogo passa a explicar a recusa e deixa de oferecer a exclusão.
-
-A regra de "evento vazio" existe só na API, avaliada na escrita. A tela não a duplica.
+Para o fluxo completo, incluindo tombstone, GSI, `updatedAt`, lease da galeria, DLQ, backoff e cenários de recuperação, veja [Reconciliação da exclusão de eventos](/developers/flows/event-deletion-reconciliation).
 
 ## Criar uma galeria
 
