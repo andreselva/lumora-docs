@@ -14,7 +14,7 @@ A seção **Envio de fotos**, na página do evento, mostra essas etapas para tod
 | **Aguardando arquivo** | Fotos registradas cujo recebimento ainda não foi confirmado pelo processamento. O arquivo pode estar a caminho ou já ter chegado. |
 | **Em processamento** | Fotos cujo arquivo chegou e está sendo preparado. |
 | **Prontas** | Fotos processadas, com miniatura disponível. |
-| **Com falha** | Fotos cujo arquivo foi recebido, mas não pôde ser processado. |
+| **Com falha** | Fotos cujo arquivo foi recebido, mas não pôde ser processado. Quando há fotos com falha, aparece o botão **Reprocessar falhas**. |
 
 Os contadores se atualizam sozinhos a cada poucos segundos enquanto houver fotos a caminho. Você não precisa recarregar a página.
 
@@ -30,6 +30,7 @@ Acima dos contadores, uma frase resume a etapa atual:
 | **Processamento concluído. N fotos não puderam ser processadas.** | Terminou, mas algumas fotos falharam. Veja [Problemas no envio](/user/photos/upload-problems#fotos-com-falha). |
 | **N fotos ainda sem arquivo no servidor.** | O recebimento continua sem confirmação. Pode ser um envio interrompido ou uma demora no processamento. Veja [como retomar](/user/photos/upload-problems#o-envio-foi-interrompido). |
 | **N fotos ainda em processamento. Volte mais tarde para conferir.** | O processamento está demorando mais que o esperado. |
+| **Reprocessamento solicitado. Aguardando o servidor processar as fotos com falha.** | Você pediu para reprocessar. Os contadores se atualizam sozinhos. Veja [Problemas no envio](/user/photos/upload-problems#fotos-com-falha). |
 
 ## Quando a atualização automática para
 
@@ -40,6 +41,21 @@ Para ver a situação atual depois disso, recarregue a página.
 ## Fotos na galeria
 
 Na grade da galeria, as fotos seguem a ordenação definida pelo Lumora. Ela não garante a ordem dos nomes dos arquivos. Clique em **Carregar mais fotos** para ver as seguintes.
+
+### A situação de cada foto
+
+Fotos prontas não têm selo. As demais mostram um selo no canto da miniatura:
+
+| Selo | Significado |
+| --- | --- |
+| **Pendente** | O arquivo ainda não chegou ao Lumora: o envio está em andamento ou foi interrompido. |
+| **Processando** | O arquivo chegou e está sendo preparado. |
+| **Falhou** | O arquivo chegou, mas não pôde ser processado. |
+| **Rejeitada** | O Lumora recusou o conteúdo do arquivo. Enviar o mesmo arquivo de novo não resolve. |
+
+### Filtrar por situação
+
+Acima da grade, o campo **Status** filtra as fotos: **Todas**, **Prontas**, **Processando**, **Pendentes** e **Com falha**. A escolha vale só para a galeria aberta e volta para **Todas** quando você troca de galeria.
 
 <Note>
   Uma foto sem miniatura pode aparecer com a imagem quebrada. Uma foto com falha também pode ter miniatura, se a falha ocorreu depois de ela ser gerada. Consulte os contadores para acompanhar o resultado do processamento.
