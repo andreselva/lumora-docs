@@ -168,6 +168,17 @@ Veja [Seleção de fotos](/developers/flows/photo-selection).
 
 O uso desses campos está em [Processamento de imagens](/developers/flows/image-processing).
 
+## Pedidos
+
+O pedido tem uma partição própria, `ORDER#{orderId}`, e uma entrada no GSI1 do fotógrafo depois de publicado.
+
+| Item | `PK` | `SK` | Conteúdo |
+| --- | --- | --- | --- |
+| Pedido | `ORDER#{orderId}` | `META` | `ownerId`, `eventId`, `status`, `currency`, retrato do pacote (`package`), `quote`, `assembly`, datas. Depois de publicado, também `GSI1PK` = `USER#{sub}` e `GSI1SK` = `ORDER#{createdAt}`. |
+| Item da montagem | `ORDER#{orderId}` | `ITEM#{assemblyId}#{photoId}` | `galleryId` e `photoId`. Os itens de cada montagem ficam separados e nunca são apagados. |
+
+O pedido guarda `ownerId` e `eventId`, e quem o lê confere os dois. Os campos do evento que o pedido usa (`activeOrderId`, `orderCount`, `selectionRevision`) estão em [Seleção de fotos](/developers/flows/photo-selection) e [Pedidos](/developers/flows/orders).
+
 ## Escritas transacionais
 
 As operações abaixo gravam mais de um item e usam `TransactWriteItems`:
