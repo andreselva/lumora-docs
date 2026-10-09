@@ -72,6 +72,7 @@
             "pages": [
               "developers/flows/reprocessing-and-media",
               "developers/flows/authentication",
+              "developers/flows/public-client-access",
               "developers/flows/account-bootstrap",
               "developers/flows/events-and-galleries",
               "developers/flows/event-publishing-and-access-link",
