@@ -68,10 +68,9 @@ O teste `scripts/infra-template.test.ts` verifica parte dessas políticas.
 A API é uma HTTP API (v2) com estágio `dev`.
 
 - **Autorização.** Um JWT authorizer nativo valida o token contra o User Pool. Ele é o authorizer padrão e exige o scope `aws.cognito.signin.user.admin`. Cada rota protegida declara o authorizer e o scope explicitamente.
-- **Rota pública.** Somente `GET /health` usa `Authorizer: NONE`.
-- **CORS.** A API aceita qualquer origem, com os headers `Content-Type`, `Authorization` e `x-gallery-token`.
-
-O header `x-gallery-token` está liberado no CORS, mas nenhuma rota o utiliza atualmente.
+- **Rota sem credencial.** Somente `GET /health` usa `Authorizer: NONE`.
+- **Rotas do cliente.** As rotas `/public/*` usam o `PublicAccessAuthorizer`, um Lambda authorizer que lê o header `x-access-token`, com resposta em cache por token por 60 segundos. Cada uma declara limite de 20 requisições por segundo, com rajada de 40. Veja [Acesso público do cliente](/developers/flows/public-client-access).
+- **CORS.** A API aceita qualquer origem, com os headers `Content-Type`, `Authorization` e `x-access-token`.
 
 ## Cognito
 
