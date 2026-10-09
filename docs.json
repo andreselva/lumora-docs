@@ -70,6 +70,7 @@
           {
             "group": "Fluxos",
             "pages": [
+              "developers/flows/reprocessing-and-media",
               "developers/flows/authentication",
               "developers/flows/account-bootstrap",
               "developers/flows/events-and-galleries",
