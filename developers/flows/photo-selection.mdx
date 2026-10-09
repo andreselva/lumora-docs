@@ -1,0 +1,169 @@
+---
+title: "Seleção de fotos"
+description: "Como o cliente marca e desmarca fotos com o teto do pacote garantido pela escrita, e como o fotógrafo lê a seleção e a exporta para o Lightroom."
+---
+
+O cliente escolhe as fotos que quer comprar tocando nelas. Cada toque é uma escrita no DynamoDB que muda três coisas ao mesmo tempo: o item da seleção, o contador do evento e a revisão da seleção. O teto do pacote é uma condição dessa escrita, não uma leitura anterior, e por isso vale mesmo com várias abas ou vários dispositivos selecionando ao mesmo tempo.
+
+A seleção usa a mesma entrada da galeria pública. Veja [Acesso público do cliente](/developers/flows/public-client-access). O pacote que define o teto está em [Pacote, publicação e link do cliente](/developers/flows/event-publishing-and-access-link).
+
+## Conceitos
+
+| Conceito | Definição |
+| --- | --- |
+| Seleção | Um item `SEL#{photoId}` por foto, na partição `GALLERY#{galleryId}`. |
+| Contador do evento | `selectionCount` no item do evento. Soma **todas** as galerias: o teto vale para o evento inteiro. |
+| Revisão | `selectionRevision` no item do evento. Só cresce, a cada mudança da seleção. |
+| Teto | `selectionLimit`: as fotos incluídas no pacote quando o fotógrafo não vende adicionais; nenhum teto quando vende. |
+| Pedido ativo | `activeOrderId` no evento. Enquanto existir, a seleção está congelada. Veja [Pedidos](/developers/flows/orders). |
+
+O teto sai do pacote gravado no evento: `includedPhotos` quando `extraPhotoPriceCents` é `null`, e sem limite caso contrário. Um evento sem pacote não tem link, então não há seleção para limitar.
+
+## Selecionar uma foto
+
+**Rota:** `PUT /public/selection/{photoId}?galleryId={galleryId}`, sem corpo.
+
+Os dois ids são validados por `GallerySelectionRequestSchema` e só valem depois de encontrados no evento do link.
+
+### A transação
+
+`DynamoDbGallerySelectionRepository.select` executa uma transação com quatro operações. A ordem dos itens é a dos motivos de cancelamento lidos depois.
+
+| Operação | Condição | Efeito |
+| --- | --- | --- |
+| `Update` do evento | link dá acesso, sem pedido ativo e abaixo do teto | `selectionCount + 1` e `selectionRevision + 1` |
+| `ConditionCheck` da galeria | existe e está ativa | Impede selecionar em galeria inexistente ou em exclusão. |
+| `ConditionCheck` da foto | existe e está `AVAILABLE` | A chave leva a galeria, então uma foto de outra galeria não é encontrada. |
+| `Put` do item da seleção | não existir | Registra a seleção, com `ownerId`, `eventId`, `galleryId`, `photoId` e `selectedAt`. |
+
+A condição do evento reúne várias regras:
+
+- **O link ainda dá acesso.** É `LINK_GRANTS_ACCESS`: evento `PUBLISHED`, `accessTokenHash` igual ao do token apresentado, `accessLinkExpiresAt` no futuro e sem revogação vencida. Um link substituído entre a leitura e a escrita não consegue gravar.
+- **Sem pedido ativo.** `attribute_not_exists(activeOrderId)`.
+- **Abaixo do teto.** O pacote existe e, ou vende adicionais, ou `selectionCount` ainda não chegou a `includedPhotos`.
+
+`selectionLimit`, no domínio, e `BELOW_SELECTION_LIMIT`, no repositório, expressam a mesma regra. O código pede que as duas sejam alteradas juntas.
+
+### Idempotência
+
+Selecionar a mesma foto de novo não conta duas vezes. O `Put` exige que o item não exista, e o contador só sobe na mesma transação que cria o item. Se o item já existe, a transação inteira é cancelada, nada é gravado e a resposta é a mesma da primeira vez.
+
+### Como o motivo da recusa é decidido
+
+A escrita é a fonte da verdade, e as leituras só entram quando ela é recusada, para escolher a resposta. `SelectGalleryPhoto` lê o resultado da transação e, se `REJECTED`, aplica nesta ordem:
+
+| Ordem | Verificação | Resposta |
+| --- | --- | --- |
+| 1 | `assertCanView`: o link não dá mais acesso | 403 `ACCESS_DENIED` |
+| 1 | `assertCanView`: galeria de outro evento, inexistente ou em exclusão | 404 `NOT_FOUND` |
+| 2 | A foto não está pronta nesta galeria | 404 `NOT_FOUND` |
+| 3 | A foto já estava selecionada | 200, sucesso |
+| 4 | O evento tem pedido ativo | 409 `SELECTION_LOCKED` |
+| 5 | O teto foi atingido | 409 `SELECTION_LIMIT` |
+
+Uma condição que a transação não chegou a avaliar aparece como `false` em `REJECTED`, e por isso `SelectGalleryPhoto` confere de novo com leituras (`isSelected`, `tally`). Se a escrita foi recusada pela galeria, mas a galeria parece visível na leitura logo depois, o estado mudou no meio do caminho e o caso de uso lança um erro interno, que responde 500.
+
+**Resposta:** 200 com `{ photoId, selected: true }`, para a primeira seleção e para a repetida.
+
+## Desmarcar uma foto
+
+**Rota:** `DELETE /public/selection/{photoId}?galleryId={galleryId}`.
+
+A transação de `deselect` tem três operações:
+
+| Operação | Condição | Efeito |
+| --- | --- | --- |
+| `Update` do evento | link dá acesso e sem pedido ativo | `selectionCount - 1` e `selectionRevision + 1` |
+| `ConditionCheck` da galeria | existe e está ativa | — |
+| `Delete` do item da seleção | existir e pertencer ao evento | Remove a seleção. |
+
+O contador só desce junto com a remoção do item, o que torna a repetição inofensiva. A condição `eventId` no item impede que o link de outro evento mexa na galeria.
+
+Diferente de selecionar, desmarcar **não confere o estado da foto**. Tirar da seleção uma foto que deixou de estar pronta continua liberando a vaga.
+
+Ordem das respostas quando a escrita é recusada: link (403), galeria (404), foto que já não estava selecionada (200) e seleção congelada por um pedido (409 `SELECTION_LOCKED`).
+
+**Resposta:** 200 com `{ photoId, selected: false }`.
+
+## Ler a seleção
+
+**Rota:** `GET /public/selection?galleryId={galleryId}`.
+
+A resposta traz, para a galeria pedida:
+
+| Campo | Significado |
+| --- | --- |
+| `photoIds` | Ids das fotos selecionadas na galeria, na ordem das chaves, que é a das fotos. |
+| `selectedCount` | Total do evento, somando as galerias. |
+| `limit` | Teto do pacote, ou `null` se não há teto. |
+| `pricing` | `packageCents`, `includedPhotos` e `extraPhotoPriceCents`, para a tela mostrar o preço da seleção. `null` sem pacote. |
+| `orderId` | Pedido ativo, que congela a seleção. |
+
+`pricing.packageCents` é o valor do pacote só quando o pacote é cobrado pela plataforma (`PLATFORM`); pago por fora, é zero. O valor cobrado de verdade é sempre calculado no servidor ao finalizar o pedido.
+
+### Uma leitura coerente
+
+Os ids e o total vêm de leituras diferentes. Para que o cliente não veja um total que não bate com a lista, `ListGallerySelection` cerca a leitura dos ids com a revisão da seleção:
+
+1. `assertCanViewSelection` lê o evento, autoriza o acesso e devolve o retrato da seleção (`SelectionTally`) com a revisão.
+2. Lê os ids da seleção, com leitura consistente.
+3. Lê o evento de novo. Se a revisão for a mesma, nada mudou no intervalo e a resposta é devolvida.
+4. Se mudou, repete a leitura dos ids, até `MAX_SELECTION_READS` (3) vezes. Depois disso, a resposta é `WriteConflictError`: 409 `CONFLICT`.
+
+Duas leituras com a mesma revisão cercam um intervalo sem nenhuma mudança, mesmo que o contador tenha voltado ao mesmo valor. É por isso que a revisão existe como campo separado.
+
+`listSelectedPhotoIds` lê todas as páginas do DynamoDB, sem paginação para o cliente: cada item é pequeno, e com adicionais à venda não há teto para limitar a lista.
+
+## Fotos excluídas saem da seleção
+
+Quando o fotógrafo exclui fotos, a seleção sai junto. A transação de exclusão apaga o item `SEL#{photoId}` de cada foto. Para as que estavam selecionadas, ela também devolve as vagas ao evento: `selectionCount` desce e `selectionRevision` sobe, com a condição `selectionCount >= freedSelections`. A condição do `Delete` prende a leitura que decidiu quais fotos estavam selecionadas: sem ela, uma seleção feita no meio do caminho ficaria órfã e contaria para sempre. Veja a exclusão de fotos em [Exclusão de fotos e galerias](/developers/flows/photo-and-gallery-deletion).
+
+## O fotógrafo lê a seleção
+
+Duas rotas do Studio, autenticadas por JWT, mostram o que o cliente escolheu:
+
+| Rota | Resposta |
+| --- | --- |
+| `GET /events/{eventId}/galleries/{galleryId}/selection` | `items`, com `photoId` e `originalName` de cada foto selecionada. |
+| `GET /events/{eventId}/galleries/{galleryId}/selection/export` | Texto para o filtro do Lightroom. |
+
+`GetStudioGallerySelection` lê a galeria antes, na partição do fotógrafo: galeria de outro fotógrafo, de outro evento ou inexistente responde 404, e só então a seleção é lida. `listSelectedPhotos` busca os nomes com `BatchGetItem` em lotes de 100 (com nova tentativa das chaves não processadas, no máximo 5) e devolve na ordem da seleção. Fotos que não existem mais ficam de fora.
+
+### Exportar para o Lightroom
+
+`lightroomFilter` monta um texto para colar no filtro de biblioteca do Lightroom (Texto, Nome do arquivo, Contém), que trata termos separados por vírgula como alternativas.
+
+- Os nomes vão **sem extensão**, para achar o RAW ou o JPEG do catálogo a partir do arquivo enviado.
+- Dois envios que só diferem na extensão viram um termo só.
+- Um nome que o filtro não consegue representar fica de fora do texto e volta em `unsupported`. São os nomes com espaço ou vírgula, que o filtro separaria em termos, os que começam com `!` ou `+`, que ele interpreta como negação ou "começa com", e os que terminam com `+`.
+
+A resposta traz `text`, `count` (quantas fotos o texto encontra) e `unsupported`. No Studio, **Copiar nomes** escreve o texto na área de transferência e avisa quais nomes o filtro não aceita, para o fotógrafo procurar à mão.
+
+## Frontend do cliente
+
+`useGallerySelection` mantém a seleção no cache do link. A chave não leva o token, porque o cache é próprio de cada link. O total é do evento, então toda mudança invalida a seleção de todas as galerias.
+
+- **Atualização otimista.** A tela aplica o toque na hora e envia em segundo plano. `useSelectionOnScreen` combina a seleção do servidor com as mudanças pendentes e as confirmadas depois da última leitura, na ordem dos toques. Uma recusa sai sozinha, sem levar junto os toques seguintes.
+- **Nova tentativa em disputa.** Um 409 `CONFLICT` é repetido até 3 vezes.
+- **Teto.** No limite, o pedido vai à API em vez de ser barrado na tela: o servidor é quem decide, e a resposta 409 `SELECTION_LIMIT` avisa o cliente.
+- **Congelada.** Com 409 `SELECTION_LOCKED`, a tela entende que a seleção já foi enviada como pedido.
+- **Filtro e lightbox.** A grade tem o filtro "só selecionadas", e o botão de seleção também aparece no lightbox.
+
+## Erros
+
+| Situação | Status | `code` |
+| --- | --- | --- |
+| Link vencido, revogado ou substituído, ou evento não publicado | 403 | `ACCESS_DENIED` |
+| Galeria de outro evento, inexistente ou em exclusão | 404 | `NOT_FOUND` |
+| Foto não pronta, de outra galeria ou inexistente | 404 | `NOT_FOUND` |
+| Teto do pacote atingido | 409 | `SELECTION_LIMIT` |
+| Seleção congelada por um pedido | 409 | `SELECTION_LOCKED` |
+| Escritas simultâneas esgotaram as tentativas | 409 | `CONFLICT` |
+| `galleryId` ou `photoId` com formato inválido | 400 | `VALIDATION_ERROR` |
+
+## Garantias e limites
+
+- **O teto não é ultrapassado.** A condição está na escrita que sobe o contador. Há teste de 50 seleções disputando um limite de 30 que termina com exatamente 30.
+- **Repetir é inofensivo.** `PUT` e `DELETE` repetidos, inclusive em paralelo, não alteram o contador.
+- **Um contador por evento.** Todas as seleções do evento disputam o mesmo item. Muitas escritas simultâneas podem esgotar as tentativas da transação e responder 409 `CONFLICT`, que o cliente repete.
+- **A chave não leva o dono.** O item da seleção fica em `GALLERY#{galleryId}`, sem o `sub` do fotógrafo. O isolamento depende de a galeria só ser endereçada depois de encontrada no evento do link, e o item guarda `ownerId` e `eventId` para conferência.
