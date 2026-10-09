@@ -1,0 +1,76 @@
+---
+title: "Acompanhar a seleção do cliente"
+description: "Veja como o cliente escolhe as fotos pelo link, o que acontece ao finalizar o pedido e como copiar os nomes das fotos escolhidas para o Lightroom."
+---
+
+Depois que você [compartilha o evento](/user/events/share-with-client), o cliente escolhe as fotos que quer. Esta página mostra o que ele vê e como você acompanha a escolha.
+
+## O que o cliente vê
+
+O cliente abre o link no navegador, sem criar conta.
+
+- Ele vê a lista de galerias do evento e, em cada uma, a grade de fotos. Só aparecem fotos **Prontas**.
+- Ao abrir uma foto, ela é mostrada maior, com marca d'água do Lumora. A miniatura da grade não tem marca d'água.
+- Ele marca e desmarca fotos. O contador no pé da tela mostra quantas estão selecionadas.
+- A opção **Só selecionadas** mostra apenas as fotos escolhidas na galeria.
+
+O contador depende do pacote:
+
+- **Sem fotos adicionais à venda**, ele mostra o total sobre o limite, como `12/30 fotos selecionadas`. No limite, o cliente precisa desmarcar uma foto para escolher outra.
+- **Com fotos adicionais à venda**, não há limite. O contador mostra o total de fotos e o valor, que se atualiza a cada foto marcada.
+
+O total das galerias é somado. O limite do pacote vale para o evento inteiro.
+
+## Finalizar o pedido
+
+Quando termina de escolher, o cliente clica em **Revisar pedido**. O Lumora mostra o valor linha a linha: fotos selecionadas, pacote, fotos adicionais e total. Ao clicar em **Finalizar pedido**, a seleção é enviada.
+
+Depois disso:
+
+- **A seleção não pode mais ser alterada.** As fotos escolhidas aparecem sem poder ser desmarcadas, e o botão do cliente passa a ser **Ver pedido**.
+- **O pacote do evento não pode mais ser alterado.**
+- O pedido aparece para você em [Pedidos](/user/orders/view-orders).
+
+O pedido tem um destes dois resultados na tela do cliente:
+
+| Mensagem | Quando acontece |
+| --- | --- |
+| **Pedido confirmado** | Não há valor a pagar: as fotos escolhidas estão incluídas no pacote e você já recebeu o pacote por fora. |
+| **Pedido registrado** | Há valor a pagar. O pedido fica aguardando o pagamento. |
+
+<Warning>
+  Hoje o Lumora não processa pagamentos. Um pedido com valor a pagar fica em **Aguardando pagamento** e não muda sozinho. Combine o pagamento diretamente com o cliente.
+</Warning>
+
+## Ver a seleção de cada galeria
+
+Na página do evento, abra uma galeria e clique na aba **Seleção**. Ela lista os nomes dos arquivos das fotos que o cliente escolheu naquela galeria, com a contagem no topo.
+
+- Sem escolhas, a aba mostra **O cliente ainda não selecionou fotos**.
+- A lista reflete a escolha do cliente no momento. Se ele ainda estiver escolhendo, volte mais tarde para ver a versão mais recente.
+- A aba é só de consulta. Você não altera a seleção do cliente.
+
+## Copiar os nomes para o Lightroom
+
+Para achar no seu catálogo as fotos escolhidas:
+
+<Steps>
+  <Step title="Copie os nomes">
+    Na aba **Seleção** da galeria, clique em **Copiar nomes**.
+  </Step>
+  <Step title="Cole no Lightroom">
+    No filtro de biblioteca do Lightroom, escolha **Texto**, **Nome do arquivo**, **Contém** e cole o texto copiado.
+  </Step>
+</Steps>
+
+Os nomes vão sem a extensão do arquivo, para o filtro achar também o RAW correspondente a um JPEG enviado. Cada galeria é copiada separadamente.
+
+O filtro do Lightroom não aceita certos nomes. Quando algum nome fica de fora, o Lumora avisa quais são, e você procura essas fotos à mão. Ficam de fora os nomes que:
+
+- têm espaço ou vírgula no nome;
+- começam com `!` ou `+`;
+- terminam com `+`.
+
+## Se o link do cliente vencer
+
+A seleção fica guardada no evento. Se o link vencer ou for substituído, o cliente deixa de abrir a galeria, mas o que ele escolheu continua salvo. Gere um [novo link](/user/events/share-with-client#gerar-o-link-do-cliente) para ele voltar.

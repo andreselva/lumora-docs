@@ -30,24 +30,36 @@ O Lumora é uma plataforma para fotógrafos organizarem as fotos de seus eventos
   <Card title="Resolver problemas de envio" icon="life-ring" href="/user/photos/upload-problems">
     Saiba o que fazer quando um envio falha ou é interrompido.
   </Card>
+  <Card title="Compartilhar com o cliente" icon="share-nodes" href="/user/events/share-with-client">
+    Defina o pacote, publique o evento e gere o link do cliente.
+  </Card>
+  <Card title="Acompanhar a seleção" icon="list-check" href="/user/events/client-selection">
+    Veja o que o cliente escolheu e copie os nomes para o Lightroom.
+  </Card>
+  <Card title="Consultar pedidos" icon="receipt" href="/user/orders/view-orders">
+    Veja os pedidos enviados pelos clientes e o estado de cada um.
+  </Card>
 </CardGroup>
 
 ## Como o Lumora organiza seu trabalho
 
 O Lumora usa três conceitos:
 
-- **Evento**: o trabalho fotografado, como um casamento ou uma formatura. Tem nome, data e uma data de expiração.
+- **Evento**: o trabalho fotografado, como um casamento ou uma formatura. Tem nome, data, uma data de expiração e um pacote, que é o valor combinado com o cliente.
 - **Galeria**: uma divisão dentro do evento, como "Cerimônia" ou "Recepção". Todo evento já nasce com uma galeria chamada **Galeria principal**.
 - **Foto**: cada arquivo enviado para uma galeria.
 
+O cliente não tem conta. Você gera um link para o evento, e ele usa o link para ver as fotos e escolher as que quer. A escolha final dele vira um **pedido**.
+
 ## O que ainda não está disponível
 
-Os itens abaixo aparecem no menu ou em telas do Lumora Studio, mas ainda não funcionam:
+Os itens abaixo ainda não funcionam ou funcionam só em parte:
 
 | Recurso | Situação atual |
 | --- | --- |
-| **Pedidos** | O item existe no menu, mas a página ainda não tem conteúdo. |
 | **Configurações** | O item existe no menu, mas a página ainda não tem conteúdo. |
 | Excluir galerias | Não há essa opção na tela. |
-| Compartilhar a galeria com clientes | Ainda não está disponível. |
-| Vender e entregar fotos | Ainda não está disponível. |
+| Pagamento | O Lumora não processa pagamentos. Um pedido com valor a pagar fica em **Aguardando pagamento**. Veja [Consultar pedidos](/user/orders/view-orders). |
+| Cancelar ou confirmar pedidos | A página **Pedidos** é somente de consulta. |
+| Link do cliente em produção | O link gerado hoje usa o endereço do ambiente local (`localhost`). Ele só abre no mesmo computador. Veja [Gerar o link do cliente](/user/events/share-with-client#gerar-o-link-do-cliente). |
+| Entregar as fotos ao cliente | Ainda não está disponível. O cliente escolhe as fotos, mas não baixa os originais pelo Lumora. |
