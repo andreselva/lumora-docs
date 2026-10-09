@@ -1,6 +1,6 @@
 ---
 title: "Processamento de imagens"
-description: "Como o imageProcessor consome a fila, gera os derivados e se protege de duplicatas, reentregas e workers atrasados."
+description: "Como o imageProcessor consome a fila, gera miniatura e preview com marca d'água e se protege de duplicatas, reentregas e workers atrasados."
 ---
 
 ## Objetivo
@@ -38,7 +38,7 @@ sequenceDiagram
     I->>I: confere tamanho e tipo
     I->>S: GetObject da versão
     I->>I: valida JPEG, gera thumbnail e preview
-    I->>S: grava os dois derivados
+    I->>S: grava os dois derivados no bucket de mídia
     I->>D: markAvailable (UpdateItem condicional)
     I-->>Q: mensagem confirmada
   end
@@ -46,17 +46,16 @@ sequenceDiagram
 
 ### Etapas do caso de uso
 
-`ProcessUploadedPhoto`, em `services/api/src/application/photos`, executa as etapas abaixo. O nome entre parênteses é o valor do campo `stage` nos logs de erro.
+`ProcessUploadedPhoto`, em `services/api/src/application/photos/commands`, executa as etapas abaixo. O nome entre parênteses é o valor do campo `stage` nos logs de erro.
 
 1. **Reivindicar** (`claim`). Tenta assumir o processamento da foto para esta versão do objeto. Se não conseguir, encerra sem erro.
 2. **Ler a foto** (`getPhoto`). Obtém o tamanho e o tipo declarados no registro.
 3. **Inspecionar o original** (`headOriginal`). `HeadObject` na versão reivindicada.
 4. **Conferir metadados** (`validate`). Tamanho e `Content-Type` do objeto precisam ser iguais aos do registro.
 5. **Baixar o original** (`getOriginal`). `GetObject` na versão reivindicada, inteiro em memória.
-6. **Validar o conteúdo** (`validate`). O sharp lê os metadados e confirma que o formato é JPEG.
-7. **Gerar e gravar a miniatura** (`thumbnail`, `putThumbnail`).
-8. **Gerar e gravar a preview** (`preview`, `putPreview`).
-9. **Publicar** (`markAvailable`). Leva a foto a `AVAILABLE`.
+6. **Processar** (`process`). O sharp lê os metadados e confirma que o formato é JPEG, aplica a orientação EXIF e gera a miniatura e a preview, esta com marca d'água.
+7. **Gravar a miniatura** (`putThumbnail`) e **a preview** (`putPreview`), nessa ordem, no bucket de mídia.
+8. **Publicar** (`markAvailable`). Leva a foto a `AVAILABLE`, junto com as dimensões da preview.
 
 A reivindicação vem antes de qualquer acesso ao S3. Mensagens duplicadas ou de versões tardias param no passo 1, sem custo de leitura de objeto.
 
@@ -80,18 +79,24 @@ A configuração relevante:
 
 ### O que o handler faz com cada mensagem
 
+Cada mensagem passa por `ImageJobNormalizer`, que decide o que ela é antes de qualquer acesso a dados.
+
 | Conteúdo | Tratamento |
 | --- | --- |
 | Evento de teste do S3 (`s3:TestEvent`) | Ignorado. O S3 envia esse evento ao configurar a notificação. |
-| Chave fora do padrão `photos/.../original.jpeg` | Registrado como aviso e ignorado. |
-| Evento sem `versionId` | Erro. A mensagem volta para a fila. |
-| Evento válido | Encaminhado ao caso de uso. |
+| JSON inválido, formato desconhecido ou job de reprocessamento inválido | **Malformada.** Registrada como erro e descartada **sem retry**: repetir não mudaria o resultado. |
+| Job `REPROCESS_PHOTO` | Segue para o caso de uso com a versão e o `requestId` da mensagem. Veja [Reprocessamento de fotos](/developers/flows/photo-reprocessing). |
+| Evento do S3 com chave fora do padrão `photos/.../original.jpeg` | Registrado como aviso e ignorado. |
+| Evento do S3 sem `versionId` | Erro. A mensagem volta para a fila. |
+| Evento do S3 válido | Encaminhado ao caso de uso. |
 
-A chave vem codificada no evento do S3. O handler a decodifica antes de interpretá-la.
+A chave vem codificada no evento do S3. O normalizador troca `+` por espaço e a decodifica antes de interpretá-la.
+
+Uma mensagem do S3 pode trazer vários registros. Eles são processados em sequência dentro da mesma invocação. Se um deles falha, a mensagem inteira volta à fila, e os registros já concluídos são recusados na reivindicação seguinte, sem efeito.
 
 ## Os campos de controle
 
-O processamento é coordenado por quatro atributos do item da foto no DynamoDB. Não há lock externo nem tabela auxiliar.
+O processamento é coordenado por atributos do item da foto no DynamoDB. Os quatro primeiros são os de controle; o reprocessamento acrescenta `reprocessRequestId` e `reprocessAttemptId`. Não há lock externo nem tabela auxiliar.
 
 | Campo | Papel |
 | --- | --- |
@@ -99,6 +104,8 @@ O processamento é coordenado por quatro atributos do item da foto no DynamoDB. 
 | `processingAttemptId` | UUID da tentativa que detém o processamento agora. |
 | `processingLeaseUntil` | Instante, em milissegundos, até o qual essa tentativa é a dona. |
 | `completedAttemptId` | UUID da tentativa que concluiu. Indica onde estão os derivados publicados. |
+| `previewWidth`, `previewHeight` | Dimensões da preview publicada, gravadas junto com `completedAttemptId`. A galeria do cliente as usa para reservar o espaço da foto. Fotos publicadas antes de elas existirem não as têm. |
+| `failureReason` | Por que a foto está `FAILED`. Hoje só existe `INVALID_CONTENT`. |
 
 ## Reivindicação
 
@@ -115,7 +122,7 @@ Qualquer outra situação recusa a reivindicação:
 
 | Estado da foto | Resultado |
 | --- | --- |
-| Não existe | Recusada. Um evento órfão não recria a foto. |
+| Não existe | Recusada. Um evento órfão não recria a foto. O worker **descarta o original** que acabou de chegar. |
 | `PROCESSING`, mesma versão, lease válido | Recusada. Outra tentativa está trabalhando. |
 | `PROCESSING`, outra versão | Recusada, mesmo com lease vencido. |
 | `AVAILABLE` ou `FAILED` | Recusada. O processamento já terminou. |
@@ -170,7 +177,7 @@ Resultado: uma foto é processada a partir de uma única versão, imutável, do 
 
 `markAvailable` e `markFailed` usam o mesmo `UpdateItem` condicional, mudando só o estado de destino.
 
-**O que grava:** o novo `status`, `completedAttemptId` e `updatedAt`. Remove `processingAttemptId` e `processingLeaseUntil`.
+**O que grava:** o novo `status`, `completedAttemptId` e `updatedAt`. Em `AVAILABLE`, grava também `previewWidth` e `previewHeight`, e a dimensão inválida impede a publicação. Em `FAILED`, grava `failureReason = INVALID_CONTENT`. Remove `processingAttemptId` e `processingLeaseUntil`.
 
 **Quando é aceito:** todas estas condições são verdadeiras:
 
@@ -257,30 +264,47 @@ Uma mensagem reprocessada dias depois carrega o mesmo `versionId`. Se a foto ain
 
 ## Derivados
 
-`SharpProcessor`, em `services/api/src/shared/sharp`, gera os dois arquivos.
+`SharpProcessor`, em `services/api/src/infra/sharp`, gera os dois arquivos.
 
-| Derivado | Dimensão | Ajuste | Formato | Qualidade |
-| --- | --- | --- | --- | --- |
-| Miniatura | 400 × 400 | `cover`: preenche o quadrado, cortando o excedente | WebP | 75 |
-| Preview | até 1920 × 1920 | `inside`: cabe no quadrado, sem cortar | WebP | 80 |
+| Derivado | Dimensão | Ajuste | Marca d'água | Formato | Qualidade |
+| --- | --- | --- | --- | --- | --- |
+| Miniatura | até 600 × 600 | `inside`: cabe no quadrado, sem cortar | **Não** | WebP | 75 |
+| Preview | até 1920 × 1920 | `inside`: cabe no quadrado, sem cortar | **Sim** | WebP | 80 |
 
 Características comuns:
 
-- A imagem é rotacionada conforme a orientação EXIF antes do redimensionamento.
-- A saída não carrega os metadados do original. O sharp os descarta por padrão, e o código não pede para mantê-los.
-- `limitInputPixels` de 100 milhões de pixels recusa imagens com dimensões absurdas, uma proteção contra bombas de descompressão.
+- A imagem é rotacionada conforme a orientação EXIF antes do redimensionamento, e convertida para sRGB.
+- A saída não carrega os metadados do original (EXIF, GPS). O WebP é gravado sem `withMetadata`.
+- `limitInputPixels` de 160 milhões de pixels recusa imagens com dimensões absurdas, uma proteção contra bombas de descompressão.
 - Os objetos são gravados com `Cache-Control: public, max-age=31536000, immutable`.
+- Os dois derivados são gravados no **bucket de mídia**, distinto do bucket de originais. A entrega ao cliente está em [Acesso do cliente](/developers/flows/public-access#entrega-da-mídia).
+
+<Warning>
+  A **miniatura não tem marca d'água**. Somente a preview tem. A grade do cliente e o Studio exibem a miniatura; a preview, com marca, é a imagem maior exibida no lightbox.
+</Warning>
+
+### A marca d'água
+
+A marca é aplicada só à preview, em `createPreview`:
+
+1. A preview é redimensionada e materializada para que as dimensões finais sejam conhecidas.
+2. `watermarkTile` monta um bloco 2 × 2 com a marca em duas células na diagonal. O tamanho da marca é o lado menor da preview dividido por 8 (`WATERMARK_MARKS`), com um passo de 1,6 vezes o tamanho da marca (`WATERMARK_SPACING`).
+3. O bloco é repetido por toda a imagem (`tile: true`). As linhas ficam desencontradas, de modo que recortar um canto ou o centro não entrega uma preview limpa.
+
+A marca padrão é `LUMORA_WATERMARK`: um SVG branco com 30% de opacidade, **sem `<text>`**, porque o ambiente do Lambda não tem fontes. Ela fica no código, e não em arquivo, para entrar no bundle sem loader. Sem marca na configuração, a preview sai limpa; o caso de uso sempre passa a marca.
+
+Uma falha ao aplicar a marca lança `InvalidWatermarkError`. Ela **não** é uma falha do conteúdo da foto e portanto **não** vira `InvalidPhotoContentError`: é tratada como falha transitória, e a mensagem volta para a fila.
 
 ### Uma pasta por tentativa
 
-Os derivados ficam em `photos/{ownerId}/{eventId}/{galleryId}/{photoId}/attempts/{attemptId}/`.
+Os derivados ficam no bucket de mídia, em `photos/{ownerId}/{eventId}/{galleryId}/{photoId}/attempts/{attemptId}/`.
 
 Como o caminho inclui o `attemptId`, duas tentativas nunca gravam no mesmo objeto. A leitura usa `completedAttemptId` para escolher a pasta publicada. Veja o [ADR-008](/developers/adr/008-derivatives-per-attempt).
 
 O sufixo `-v1` no nome dos arquivos vem de `IMAGE_PROCESSING_VERSION`. Ele identifica a versão das regras de geração, e não a tentativa.
 
 <Note>
-  Atualmente apenas a miniatura é servida, pela listagem de fotos da galeria. A preview é gerada e gravada, mas nenhuma rota a expõe. Não há marca d'água.
+  A miniatura e a preview são servidas pelo CloudFront, por URLs públicas não assinadas. O Studio exibe miniaturas. A área do cliente exibe miniaturas na grade e a preview no lightbox.
 </Note>
 
 ## Erros e recuperação
@@ -297,11 +321,22 @@ O conteúdo não pode produzir derivados válidos, e repetir não mudaria o resu
 | `Content-Type` do objeto diferente do registrado | `Photo.assertOriginalMatches` |
 | Arquivo ilegível ou corrompido | `SharpProcessor.validateJpeg` |
 | Formato real diferente de JPEG | `SharpProcessor.validateJpeg` |
-| Falha do sharp ao redimensionar | `SharpProcessor.process` |
+| Falha do sharp ao redimensionar ou codificar | `SharpProcessor.processImage` |
 
-**Tratamento:** a foto é marcada como `FAILED` pela tentativa que a detém, o caso de uso registra um aviso e retorna sem erro. A mensagem é confirmada. Não há nova tentativa.
+**Tratamento:** a foto é marcada como `FAILED` pela tentativa que a detém, com `failureReason = INVALID_CONTENT`. O caso de uso registra um aviso e retorna sem erro. A mensagem é confirmada. Não há nova tentativa automática. A recuperação, quando a causa é corrigida, é o [reprocessamento](/developers/flows/photo-reprocessing). O Studio mostra essas fotos como **Rejeitada**.
 
 Se a própria gravação de `FAILED` falhar, o erro é propagado e a mensagem volta para a fila.
+
+### Foto excluída durante o processamento
+
+O fotógrafo pode excluir uma foto enquanto ela é processada. O processador trata os dois momentos em que isso aparece:
+
+| Momento | O que o worker vê | O que faz |
+| --- | --- | --- |
+| O original chega **depois** de a foto ser excluída | A reivindicação é recusada e o item antigo não existe (`photoMissing`) | Apaga o original que acabou de chegar e encerra sem erro. |
+| A foto some **durante** a tentativa | `PhotoNotFoundError` ao ler a foto ou ao concluir | Apaga o original e os derivados que esta tentativa gravou. Encerra sem erro, porque repetir não mudaria o resultado. |
+
+A exclusão de fotos não conhece os derivados de uma tentativa em andamento, então quem os gravou os remove. Veja [Exclusão de fotos](/developers/flows/photo-deletion).
 
 ### Falha transitória
 
@@ -344,9 +379,11 @@ No frontend, o polling desiste após 3 minutos sem mudança e mostra que há fot
 
 | Assunto | Caminho |
 | --- | --- |
-| Consumo da fila | `services/api/src/handlers/imageProcessor.ts` |
-| Orquestração e classificação de falhas | `services/api/src/application/photos/ProcessUploadedPhoto.ts` |
-| Reivindicação e conclusão | `services/api/src/repositories/dynamodb/DynamoDbPhotoRepository.ts` |
-| Geração de derivados | `services/api/src/shared/sharp/SharpProcessor.ts` |
-| Leitura por versão e gravação | `services/api/src/repositories/s3/S3PhotoStorage.ts` |
+| Consumo da fila | `services/api/src/handlers/sqs/imageProcessor.ts` |
+| Classificação das mensagens | `services/api/src/controllers/ImageJobNormalizer.ts` |
+| Orquestração e classificação de falhas | `services/api/src/application/photos/commands/ProcessUploadedPhoto.ts` |
+| Reivindicação e conclusão | `services/api/src/infra/dynamodb/DynamoDbPhotoRepository.ts` |
+| Geração de derivados | `services/api/src/infra/sharp/SharpProcessor.ts` |
+| Marca d'água padrão | `services/api/src/infra/sharp/LumoraWatermark.ts` |
+| Leitura por versão e gravação | `services/api/src/infra/s3/S3PhotoStorage.ts` |
 | Testes de concorrência | `DynamoDbPhotoRepository.dynamodb.spec.ts`, no mesmo diretório do repositório |

@@ -78,6 +78,8 @@
               "developers/flows/photo-selection",
               "developers/flows/order-creation",
               "developers/flows/order-cancellation-and-listing",
+              "developers/flows/photo-deletion",
+              "developers/flows/photo-reprocessing",
               "developers/flows/event-deletion-reconciliation",
               "developers/flows/photo-upload",
               "developers/flows/image-processing"

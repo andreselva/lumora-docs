@@ -68,7 +68,7 @@ Para cada arquivo, em ordem, o caso de uso `RequestPhotoUploads`:
 | `Put` do fingerprint | não existir | Impede registrar o mesmo arquivo duas vezes na galeria. |
 | `Put` da foto | não existir | Cria o registro. |
 | `Update` do evento, `ADD registeredPhotoCount 1` | evento existir | Mantém o contador de fotos registradas e impede registrar em evento já removido. |
-| `ConditionCheck` da galeria | galeria existir | Impede registrar foto em galeria inexistente ou de outro fotógrafo. |
+| `ConditionCheck` da galeria | galeria existir e não estar em `DELETING` | Impede registrar foto em galeria inexistente, de outro fotógrafo ou em exclusão. |
 
 Os quatro efeitos são atômicos. Se qualquer condição falhar, nada é gravado.
 
@@ -162,6 +162,7 @@ Não há limpeza automática de fotos que ficam em `PENDING_UPLOAD` para sempre.
 | Falha | Resposta |
 | --- | --- |
 | Galeria inexistente ou de outro fotógrafo | 404 |
+| Galeria em exclusão | 409 `GALLERY_DELETING` |
 | Arquivo fora do contrato | 400 `VALIDATION_ERROR`, para o lote inteiro |
 | Conflito de transação persistente | 409 `CONFLICT` |
 
@@ -178,7 +179,7 @@ O lote não é atômico. A API processa os arquivos em sequência, e uma falha n
 
 - **Igualdade de conteúdo.** Dois arquivos diferentes com mesmo nome, tamanho e data de modificação são tratados como o mesmo.
 - **Envio único por ticket.** O presigned POST pode ser usado mais de uma vez dentro da validade. Cada uso cria uma nova versão do objeto. O processamento lida com isso fixando a primeira versão. Veja [Processamento de imagens](/developers/flows/image-processing#versão-do-original).
-- **Reenvio de foto com falha.** Uma foto em `FAILED` recebe `upload: null`. Selecionar o mesmo arquivo de novo não a reprocessa.
+- **Reenvio de foto com falha.** Uma foto em `FAILED` recebe `upload: null`. Selecionar o mesmo arquivo de novo não a reprocessa. Para tentar de novo sem reenviar o arquivo, existe o [reprocessamento](/developers/flows/photo-reprocessing).
 
 ## Acompanhamento pelo frontend
 
@@ -212,12 +213,14 @@ Quando a contagem de `AVAILABLE` muda, o hook invalida as listas de fotos do eve
 
 ### Listagem e miniaturas
 
-`GET /events/{eventId}/galleries/{galleryId}/photos` devolve 24 fotos por página, em ordem crescente de ULID. Para cada foto, a API gera uma URL assinada de leitura da miniatura, válida por 10 minutos.
+`GET /events/{eventId}/galleries/{galleryId}/photos` devolve 24 fotos por página, em ordem crescente de ULID. O parâmetro opcional `status` filtra por estado (`PENDING_UPLOAD`, `PROCESSING`, `AVAILABLE`, `FAILED` ou `ARCHIVED`). O cursor de uma listagem filtrada só vale para o mesmo filtro.
 
-A chave da miniatura depende de `completedAttemptId`, a tentativa que concluiu o processamento.
+O filtro é aplicado pelo DynamoDB depois da leitura, então uma página filtrada pode trazer menos de 24 fotos e ainda ter `nextCursor`. Para completar a página, o repositório lê blocos de 250 itens, até 4 leituras por requisição.
+
+Para cada foto, a API monta as URLs de miniatura e de preview a partir da tentativa publicada (`completedAttemptId`) e da base da mídia (`MEDIA_BASE_URL`). São URLs do CloudFront, **não assinadas**. A entrega da mídia está em [Acesso do cliente](/developers/flows/public-access#entrega-da-mídia).
 
 <Note>
-  Atualmente a URL de miniatura é gerada para toda foto, sem verificar o estado nem a existência do derivado. Quando o objeto não existe, o S3 recusa o acesso. Uma foto em `FAILED` pode ter miniatura se a geração da preview falhou depois de a miniatura ser gravada. Veja [Limitações](/developers/limitations#limitações-atuais).
+  Atualmente a API monta as URLs para toda foto, em qualquer estado, sem verificar se o derivado existe. Para uma foto sem derivados, a URL aponta para um objeto inexistente. O Studio contorna isso na tela: `hasThumbnail` só usa a URL de fotos `AVAILABLE` ou `ARCHIVED`, e as demais mostram um substituto com o estado. Veja [Limitações](/developers/limitations#limitações-atuais).
 </Note>
 
 ## Onde olhar no código
@@ -227,8 +230,9 @@ A chave da miniatura depende de `completedAttemptId`, a tentativa que concluiu o
 | Filtro de arquivos | `apps/web/src/studio/galleries/photoFiles.ts` |
 | Fila e agendamento | `apps/web/src/studio/galleries/uploadManager.ts` |
 | Envio ao S3 | `apps/web/src/lib/storageClient.ts` |
-| Polling do resumo | `apps/web/src/studio/hooks/useEventUploadSummary.ts` |
-| Caso de uso de registro | `services/api/src/application/photos/RequestPhotoUploads.ts` |
-| Transação de registro | `services/api/src/repositories/dynamodb/DynamoDbPhotoRepository.ts` |
-| Assinatura do POST | `services/api/src/repositories/s3/S3PhotoStorage.ts` |
+| Polling do resumo | `apps/web/src/studio/events/useEventUploadSummary.ts` |
+| Caso de uso de registro | `services/api/src/application/photos/commands/RequestPhotoUploads.ts` |
+| Transação de registro | `services/api/src/infra/dynamodb/DynamoDbPhotoRepository.ts` |
+| Assinatura do POST | `services/api/src/infra/s3/S3PhotoStorage.ts` |
 | Chaves do S3 | `services/api/src/shared/storage/S3KeyBuilder.ts` |
+| URLs de mídia | `services/api/src/shared/storage/MediaUrlBuilder.ts` |

@@ -119,7 +119,7 @@ A exclusão da galeria é **assíncrona**. A resposta 204 confirma que a exclus�
 2. `markDeleting` muda o `status` da galeria para `DELETING`, com uma escrita condicionada à existência e ao dono.
 3. O caso de uso publica uma mensagem `GALLERY`, com `galleryDeleting: true`, na fila de exclusão.
 
-**Limpeza assíncrona:** `DeletePhotosGalleryFunction` reivindica a galeria com um lease, remove do S3 e do DynamoDB uma página de até 250 fotos, publica a mensagem da página seguinte e repete. Na última página, `DynamoDbGalleryRepository.delete` executa uma transação que exclui o item da galeria, condicionada a `isDefault = false`, e decrementa `galleryCount` do evento. O mecanismo de páginas, lease e cursor é o mesmo da exclusão de evento, descrito em [Reconciliação da exclusão de eventos](/developers/flows/event-deletion-reconciliation).
+**Limpeza assíncrona:** `DeletePhotosGalleryFunction` reivindica a galeria com um lease, remove do S3 e do DynamoDB uma página de até 250 fotos, publica a mensagem da página seguinte e repete. Na última página, `DynamoDbGalleryRepository.delete` executa uma transação que exclui o item da galeria, condicionada a `isDefault = false`, e decrementa `galleryCount` do evento. O mecanismo de páginas, lease e cursor é o mesmo da exclusão de evento. Veja [Exclusão de fotos](/developers/flows/photo-deletion) e [Reconciliação da exclusão de eventos](/developers/flows/event-deletion-reconciliation).
 
 A recusa da galeria principal acontece duas vezes: na entidade e na condição da escrita final. A segunda protege contra uma corrida entre a leitura e a exclusão.
 
