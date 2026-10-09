@@ -63,11 +63,11 @@ No frontend, `changedEventFields` envia só o que mudou. Em particular, `expires
 
 ## Publicar e arquivar
 
-A entidade `Event` e o `DynamoDbEventRepository` implementam as transições `publish` (`DRAFT` para `PUBLISHED`) e `archive` (`PUBLISHED` para `ARCHIVED`), incluindo o tratamento de repetição como operação sem efeito.
+`POST /events/{eventId}/publish` leva o evento de `DRAFT` para `PUBLISHED` em uma única escrita condicional. Repetir sobre um evento já publicado é uma operação sem efeito, e publicar um evento arquivado responde 409 `EVENT_NOT_PUBLISHABLE`. Não há caminho de volta para `DRAFT`.
 
-<Warning>
-  Essas transições não estão expostas. Não há rota no template, caso de uso nem controle na tela. Atualmente todo evento permanece em `DRAFT`.
-</Warning>
+A transição `archive` (`PUBLISHED` para `ARCHIVED`) existe na entidade e no repositório, mas não está exposta: não há rota nem caso de uso.
+
+A publicação, o pacote do evento e o link do cliente estão em [Pacote, publicação e link do cliente](/developers/flows/event-publishing-and-access-link).
 
 ## Excluir um evento
 
