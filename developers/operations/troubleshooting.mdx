@@ -18,7 +18,7 @@ O original não chegou ao S3, ou o evento de criação não foi processado.
 | O objeto foi gravado por outro método | A notificação só cobre `ObjectCreated:Post`. Um `PutObject` ou uma cópia não dispara o processamento. |
 | A chave não segue o padrão | Procure o aviso `Parser da key incorreto` nos logs do processador. |
 
-Para saber se o original existe, verifique o objeto `photos/{sub}/{eventId}/{galleryId}/{photoId}/original.jpeg` no bucket.
+Para saber se o original existe, verifique o objeto `photos/{sub}/{eventId}/{galleryId}/{photoId}/original.jpeg` no bucket de originais.
 
 Não há limpeza automática. Fotos de lotes abandonados ficam em `PENDING_UPLOAD` indefinidamente.
 
@@ -32,7 +32,7 @@ A foto foi reivindicada e não foi concluída.
 
 ### Fotos em `FAILED`
 
-O conteúdo foi rejeitado. Procure o aviso `Foto rejeitada por conteúdo inválido` com o `photoId`. O `errorMessage` informa o motivo:
+O conteúdo foi rejeitado. O Studio mostra essas fotos como **Rejeitada**. Procure o aviso `Foto rejeitada por conteúdo inválido` com o `photoId`. O `errorMessage` informa o motivo:
 
 | Mensagem | Causa |
 | --- | --- |
@@ -40,9 +40,22 @@ O conteúdo foi rejeitado. Procure o aviso `Foto rejeitada por conteúdo inváli
 | `expected image/jpeg, received ...` | O `Content-Type` do objeto difere do registrado. |
 | `expected JPEG, received ...` | O arquivo tem extensão de JPEG, mas outro formato. |
 | `unreadable or corrupt JPEG` | O sharp não conseguiu ler o arquivo. |
-| `JPEG cannot be processed safely` | O sharp falhou ao redimensionar, por exemplo por exceder o limite de pixels. |
+| `JPEG cannot be processed safely` | O sharp falhou ao redimensionar ou codificar, por exemplo por exceder o limite de 160 milhões de pixels. |
 
-Não há reprocessamento para fotos em `FAILED`. Uma nova mensagem para a mesma foto é recusada na reivindicação.
+Para tentar de novo **sem reenviar o arquivo**, use **Reprocessar** na foto ou **Reprocessar falhas** na seção de envio do evento. O reprocessamento lê a mesma versão do original. Se a causa é o conteúdo do arquivo, ele falha de novo; se a causa foi corrigida no processamento, a foto volta a `AVAILABLE`. Veja [Reprocessamento de fotos](/developers/flows/photo-reprocessing).
+
+Selecionar o mesmo arquivo de novo não reprocessa: a foto em `FAILED` recebe `upload: null` por causa do fingerprint.
+
+### O reprocessamento não parece fazer nada
+
+A foto não muda de estado quando o pedido é aceito, e ela **não aparece em `PROCESSING`**. O sinal de que o trabalho terminou é a foto sair de `FAILED`, ou o contador de falhas baixar.
+
+Se nada muda:
+
+1. Procure `Reprocessamento recusado` nos logs do `imageProcessor`. O campo `reason` diz o motivo: `IN_PROGRESS` (já há uma tentativa rodando), `NOT_ELIGIBLE` (a foto não está `AVAILABLE` nem `FAILED`), `VERSION_MISMATCH`, `ALREADY_HANDLED` ou `PHOTO_MISSING`.
+2. Se não há aviso nem erro, a mensagem pode ainda estar na fila. Confira a fila de processamento e a DLQ.
+3. Uma foto cujo conteúdo é inválido volta a `FAILED`. O aviso `Foto rejeitada por conteúdo inválido` aparece de novo.
+4. A tela deixa de consultar o resumo depois de 3 minutos sem mudança nos contadores. Recarregue a página para continuar acompanhando.
 
 ### Erro `Photo processing transition condition failed`
 
@@ -58,11 +71,13 @@ A mensagem volta para a fila. Na reentrega, a reivindicação é recusada se a f
 
 ### Mensagens na DLQ
 
-O alarme `PhotoProcessingDlqAlarm` dispara com uma mensagem visível na DLQ. Isso não determina o estado da foto. Uma falha anterior à reivindicação pode deixá-la em `PENDING_UPLOAD`; depois de uma reivindicação aplicada, ela pode ficar em `PROCESSING`. Uma mensagem inválida pode nem identificar uma foto.
+Há duas DLQs, cada uma com seu alarme: `PhotoProcessingDlqAlarm`, para o processamento e o reprocessamento de imagens, e `DeletePhotosGalleryDlqAlarm`, para as exclusões. Esta seção trata da primeira; a segunda está em [A exclusão não termina](#a-exclusão-não-termina).
+
+O alarme dispara com uma mensagem visível na DLQ. Isso não determina o estado da foto. Uma falha anterior à reivindicação pode deixá-la em `PENDING_UPLOAD`; depois de uma reivindicação aplicada, ela pode ficar em `PROCESSING`. Uma mensagem inválida pode nem identificar uma foto.
 
 <Steps>
   <Step title="Identifique a foto">
-    Leia a mensagem na DLQ. Se o corpo for um evento válido do S3, a chave do objeto contém os ids do evento, da galeria e da foto. Consulte o estado persistido. Se o corpo for inválido, procure os logs pelo `messageId`.
+    Leia a mensagem na DLQ. Se o corpo for um evento válido do S3, a chave do objeto contém os ids do evento, da galeria e da foto. Se for um job `REPROCESS_PHOTO`, os ids estão no corpo. Consulte o estado persistido. Se o corpo for inválido, procure os logs pelo `messageId`.
   </Step>
   <Step title="Encontre a causa">
     Consulte os logs do `imageProcessor` pelo `photoId`. Veja as [consultas úteis](/developers/operations/observability#consultas-úteis).
@@ -79,13 +94,77 @@ A DLQ tem retenção configurada de 14 dias. Em filas standard, o tempo na fila 
 
 O redrive reinicia a retenção da mensagem, mas não a expiração da versão do S3. Por isso, redrives sucessivos não garantem que o original continue disponível. Veja [Redrive da DLQ](/developers/flows/image-processing#redrive-da-dlq).
 
-### Miniaturas quebradas na galeria
+### Miniaturas ou previews que não carregam
 
-A API gera uma URL assinada de miniatura para toda foto listada, sem verificar se o objeto existe. Quando ele não existe, o S3 recusa o acesso e o navegador mostra a imagem como quebrada. Isso afeta fotos pendentes e muitas fotos com falha. Uma foto em `FAILED` pode ter miniatura se a falha ocorreu ao gerar a preview, depois da gravação da miniatura.
+As imagens vêm do CloudFront, por URLs que a API monta para a foto a partir da tentativa publicada. Elas deixam de carregar quando o objeto não existe no bucket de mídia.
 
-É uma limitação conhecida. Veja [Limitações](/developers/limitations#limitações-atuais).
+| Situação | Observação |
+| --- | --- |
+| Foto sem derivados (`PENDING_UPLOAD`, `PROCESSING` ou `FAILED`) | A API monta a URL mesmo assim. O Studio só usa a URL de fotos `AVAILABLE` ou `ARCHIVED` e mostra um substituto nas demais. |
+| Foto que está sendo excluída | Os derivados saem do S3 antes do registro. Por um instante, a foto pode estar listada sem imagem. |
+| Domínio da mídia errado | A base das URLs vem de `MEDIA_BASE_URL`, preenchida pelo template. Confira a saída `MediaBaseUrl` da stack. |
 
-As URLs valem por 10 minutos. Uma grade aberta por mais tempo pode ter imagens que deixam de carregar até a lista ser buscada de novo.
+Não há URLs assinadas, então não há expiração por tempo: uma grade aberta por horas continua válida enquanto o objeto existir.
+
+É uma limitação conhecida a API montar URLs para fotos sem derivados. Veja [Limitações](/developers/limitations#limitações-atuais).
+
+## Link do cliente
+
+### O cliente vê "Este link não está disponível"
+
+A tela é a mesma para qualquer recusa, de propósito. Confira, no Studio, na seção **Link do cliente** do evento:
+
+| Causa | Como verificar |
+| --- | --- |
+| O evento não está publicado | A seção mostra o aviso "O evento não está publicado". Publique o evento. |
+| O link venceu | O estado é **Expirado**, com a data. Gere um novo link. |
+| O link foi substituído | Quem usa o link antigo perde o acesso. Envie o link novo. |
+| O link foi copiado incompleto | O token tem 43 caracteres. Um valor truncado é recusado antes de qualquer chamada. |
+| O evento foi excluído | O evento deixa de existir e o acesso é negado. |
+
+O link só aparece **uma vez**, logo depois de gerado. Se foi perdido, gere outro: o anterior deixa de funcionar.
+
+Uma resposta do authorizer fica em cache por até 60 segundos. Logo depois de gerar um novo link, o antigo ainda pode passar pelo authorizer por esse prazo, mas cada operação confere o link atual e o nega.
+
+### Gerar o link responde 409 `EVENT_PACKAGE_REQUIRED`
+
+O evento não tem pacote. Defina o pacote antes de gerar o link.
+
+### Salvar o pacote responde 409 `EVENT_PACKAGE_LOCKED`
+
+O evento já teve um pedido aberto. A partir daí o pacote não muda, mesmo que o pedido tenha sido cancelado.
+
+### O cliente não consegue marcar fotos
+
+| Resposta | Causa |
+| --- | --- |
+| 409 `SELECTION_LIMIT` | O pacote não vende fotos adicionais e o cliente atingiu o número de fotos incluídas, somando todas as galerias. |
+| 409 `SELECTION_LOCKED` | Já existe um pedido: a seleção está congelada. |
+| 404 `NOT_FOUND` | A foto não está `AVAILABLE` nessa galeria, ou a galeria deixou de estar visível. |
+| 403 `ACCESS_DENIED` | O link venceu, foi substituído ou o evento deixou de estar publicado. |
+| 409 `CONFLICT` | Muitas escritas simultâneas no evento. O frontend repete até 3 vezes. |
+
+### O pedido do cliente não termina
+
+| Sintoma | Causa e saída |
+| --- | --- |
+| `POST /public/orders` responde 202 repetidamente | A montagem não termina no tempo da chamada. O frontend repete até 20 vezes. Verifique os logs da `public-api` por erros. |
+| O cliente fechou a aba e o pedido ficou `ASSEMBLING` | Nada o finaliza sozinho. O cliente reabre o link e toca em **Ver pedido**; isso continua do ponto gravado. O link precisa ser o atual do evento. A seleção fica congelada até lá, e o pedido não aparece na lista do fotógrafo. |
+| 409 `EMPTY_SELECTION` | Não há fotos selecionadas, ou todas as selecionadas foram excluídas durante a montagem. O pedido foi descartado e a seleção está livre. |
+| 409 `SELECTION_LIMIT` ao finalizar | O pacote mudou depois da seleção e já não vende as fotos adicionais. O cliente precisa desmarcar fotos. |
+| 409 `ORDER_NOT_ACTIVE` | A tela mostrava um pedido que foi cancelado. Nenhum pedido novo foi aberto. O cliente revisa a seleção e finaliza de novo. |
+| 409 `CONFLICT` | A seleção ou a montagem mudou várias vezes durante a chamada. Repetir resolve. |
+| O pedido está em `PENDING_PAYMENT` e não avança | Não existe pagamento no código. Esse estado só sai por cancelamento. |
+
+Para ver o estado de um pedido no DynamoDB, leia o item `ORDER#{orderId}` / `META`: o campo `status`, e `assembly` (`galleryIndex`, `copied` e `step`) mostram o progresso.
+
+### O pedido não aparece na lista do fotógrafo
+
+Só pedidos **publicados** entram na lista:
+
+- `ASSEMBLING` ainda não foi publicado;
+- um pedido descartado por ficar sem fotos nunca foi publicado;
+- a lista usa o `GSI1`, que é eventualmente consistente. Um pedido recém-publicado pode levar um instante para aparecer.
 
 ## Upload
 
@@ -104,13 +183,17 @@ O lote inteiro é recusado quando um arquivo viola o contrato. O `details.fields
 
 O frontend filtra os arquivos antes de pedir tickets. Um 400 nessa rota indica que o filtro de `photoFiles.ts` e o contrato divergiram.
 
+### A API responde 409 `GALLERY_DELETING`
+
+A galeria está em exclusão e não aceita novas fotos. Espere a exclusão terminar. Se ela não terminar, veja [A exclusão não termina](#a-exclusão-não-termina).
+
 ### A API responde 409 `CONFLICT`
 
 Uma transação foi cancelada por conflito com outra, mesmo depois de 3 repetições. Nenhum item dessa transação foi gravado. Em um lote de uploads, transações anteriores podem já ter registrado fotos. Repetir o pedido de uploads é seguro porque o fingerprint reaproveita esses registros.
 
 ## API e autenticação
 
-### 401 em todas as rotas
+### 401 em todas as rotas do Studio
 
 - Confira `VITE_COGNITO_USER_POOL_ID` e `VITE_COGNITO_USER_POOL_CLIENT_ID`. Elas precisam ser da mesma stack que `VITE_API_URL`.
 - O authorizer valida o emissor e o client. Um token de outro pool é recusado.
@@ -122,11 +205,11 @@ O authorizer exige o scope `aws.cognito.signin.user.admin`, presente no access t
 
 ### 404 em uma rota que existe no código
 
-Uma rota precisa estar em dois lugares: no `switch` de `studioApi.ts` e nos `Events` da função no template. Faltando no template, o API Gateway responde 404 sem invocar a Lambda. Faltando no `switch`, a Lambda responde 404 `Rota não encontrada`.
+Uma rota precisa estar em dois lugares: no `switch` do handler (`studioApi.ts` ou `publicApi.ts`) e nos `Events` da função no template. Faltando no template, o API Gateway responde 404 sem invocar a Lambda. Faltando no `switch`, a Lambda responde 404 `Rota não encontrada`.
 
 ### 404 em um recurso que existe
 
-O recurso pertence a outro fotógrafo, ou o id tem formato inválido. As duas situações respondem como recurso inexistente, por desenho.
+O recurso pertence a outro fotógrafo, a galeria ou o pedido é de outro evento, ou o id tem formato inválido. Essas situações respondem como recurso inexistente, por desenho.
 
 ### `GET /me` responde 404
 
@@ -134,24 +217,28 @@ O usuário existe no Cognito, mas não tem perfil no DynamoDB. A página **Minha
 
 ## Exclusões
 
-### A exclusão de um evento não termina
+### A exclusão não termina
 
-Eventos com fotos ou galerias adicionais podem ser excluídos. O caminho síncrono remove o item ativo do evento e inicia a limpeza assíncrona do conteúdo.
+Há quatro formas de excluir (veja [Exclusão de fotos](/developers/flows/photo-deletion)), e a recuperação depende de qual delas parou.
 
-Se a limpeza não convergir:
+| O que parou | Como verificar | Recuperação |
+| --- | --- | --- |
+| Exclusão de **evento** | Tombstone `EVENT_DELETION#<eventId>` em `DELETING` | O reconciliador reenfileira as galerias paradas a cada 15 minutos, com backoff. Consulte `Limpeza de evento parada; galerias reenfileiradas` nos logs. |
+| Exclusão de **galeria** ou de **todas as fotos** | Galeria em `DELETING` | Não há reconciliador. Repita o `DELETE` pela API: o estado é regravado e a mensagem, publicada de novo. A tela não oferece a ação enquanto a galeria está em exclusão. |
+| Exclusão de **fotos escolhidas** | As fotos continuam listadas | Não há reconciliador. Repita a exclusão: fotos já removidas são ignoradas. |
 
-- confira o tombstone `EVENT_DELETION#<eventId>`; `DELETING` indica que ainda existe trabalho pendente;
-- confira a `DeletePhotosGalleryQueueDLQ`; mensagens visíveis indicam páginas que esgotaram as tentativas da fila;
-- consulte os logs de `DeletePhotosGalleryFunction` para falhas no worker;
-- consulte os logs de `EventDeletionReconcilerFunction` por `Limpeza de evento parada; galerias reenfileiradas`.
+Em qualquer caso, confira também a `DeletePhotosGalleryQueueDLQ`: mensagens visíveis indicam páginas que esgotaram as tentativas, e o alarme `DeletePhotosGalleryDlqAlarm` avisa. Consulte os logs de `DeletePhotosGalleryFunction` por `Erro ao processar mensagem de exclusão` e `Erro ao processar exclusão de fotos` (com `stage`).
 
-O reconciliador verifica exclusões vencidas periodicamente e reenfileira apenas as galerias que deixaram de avançar. Ele não depende de recuperar a mensagem morta da DLQ.
+Uma galeria em `DELETING` recusa novas fotos (409 `GALLERY_DELETING`) e some da área do cliente. O Studio mostra "Excluindo as fotos desta galeria".
 
-Veja [Reconciliação da exclusão de eventos](/developers/flows/event-deletion-reconciliation).
+O reconciliador não substitui a DLQ: ele garante a convergência da exclusão de evento, e a DLQ ajuda a investigar a causa. Veja [Reconciliação da exclusão de eventos](/developers/flows/event-deletion-reconciliation).
 
-### A exclusão de fotos falha
+### Uma foto excluída ainda aparece
 
-A tela chama `POST .../photos/delete`, rota que não existe na API. Com a API real, a chamada falha. Com o MSW ligado, um handler fictício responde com sucesso.
+- A exclusão é assíncrona. Espere o worker terminar.
+- Os derivados saem do S3 antes do registro. Por um instante, a foto pode estar listada sem imagem.
+- Imagens já em cache no CloudFront ou no navegador podem continuar visíveis, porque os derivados são servidos com cache imutável e o código não invalida a distribuição.
+- Os bytes do **original** permanecem como versão não corrente no bucket por até 15 dias. Veja [Exclusão de fotos](/developers/flows/photo-deletion#o-que-a-exclusão-não-faz).
 
 ## Desenvolvimento
 
@@ -163,9 +250,13 @@ A tela chama `POST .../photos/delete`, rota que não existe na API. Com a API re
 
 O DynamoDB Local não está no ar, ou a tabela não foi criada. Execute `docker compose up -d dynamodb` e `pnpm dynamodb:setup`. O banco é em memória: reiniciar o contêiner exige criar a tabela de novo.
 
-### Um teste de paridade de contrato falha
+### Um teste de paridade falha
 
-As duas cópias de um contrato divergiram. Alinhe `packages/contracts/src` e `services/api/src/contracts`. Veja [Backend](/developers/architecture/backend#contratos).
+Há dois tipos. Um teste de **contrato** (`tests/*-contract-parity.test.ts`) falha quando as duas cópias de um contrato divergiram: alinhe `packages/contracts/src` e `services/api/src/contracts`. Veja [Backend](/developers/architecture/backend#contratos). O teste de **preço** (`tests/selection-price-parity.test.ts`) falha quando `selectionPrice`, no frontend, e `quote`, no backend, produzem valores diferentes.
+
+### O build do frontend falha na área do cliente
+
+O plugin `publicChunkGuard` quebra o `vite build` se o carregamento inicial da área do cliente incluir o Amplify, passar do orçamento de tamanho (200 KB de JavaScript e 20 KB de CSS, em gzip), ou se a área do cliente deixar de ser carregada por `import()` dinâmico. A mensagem indica os arquivos. Use `pnpm --filter @photos/web analyze` para ver o treemap. Veja [Frontend](/developers/architecture/frontend#guarda-de-bundle-da-área-do-cliente).
 
 ### O frontend mostra dados que não existem na API
 

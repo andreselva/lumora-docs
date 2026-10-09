@@ -1,36 +1,44 @@
 ---
 title: "Observabilidade"
-description: "Logs estruturados, o alarme da DLQ e o que ainda não é medido."
+description: "Logs estruturados, métricas do processador, os alarmes das DLQs e o que ainda não é medido."
 ---
 
-A observabilidade do Lumora hoje se resume a **logs estruturados** e **um alarme**. Não há métricas próprias, tracing nem dashboard.
+A observabilidade do Lumora hoje se resume a **logs estruturados**, **métricas do processador de imagens** e **dois alarmes**, um por DLQ. Não há tracing, dashboard nem alarmes de erro das funções.
 
 ## Logs
 
-As três funções usam o Logger do AWS Lambda Powertools, que escreve uma linha JSON por registro no CloudWatch Logs.
+As sete funções escrevem uma linha JSON por registro no CloudWatch Logs. As funções que usam o Logger do AWS Lambda Powertools são as seis abaixo; o authorizer não registra nada pela aplicação.
 
 | Função | `service` no log | Retenção |
 | --- | --- | --- |
 | `studio-api` | `studio-api` | 14 dias |
-| `ImageProcessorFunction` | `image-processor` | 14 dias |
+| `public-api` | `studio-api` | 14 dias |
 | `PostConfirmationFunction` | `studio-api` | 14 dias |
+| `ImageProcessorFunction` | `image-processor` | 14 dias |
+| `DeletePhotosGalleryFunction` | `delete-photos-gallery-processor` (veja a nota) | 14 dias |
+| `EventDeletionReconcilerFunction` | `event-deletion-reconciler` | 14 dias |
+| `public-access-authorizer` | sem registros da aplicação | 14 dias |
 
-O `postConfirmation` usa a mesma instância de logger da API, por isso seus registros também saem com `service` igual a `studio-api`. O log group é o que distingue as duas funções.
+A `public-api` e o `postConfirmation` usam a mesma instância de logger da `studio-api`, por isso seus registros também saem com `service` igual a `studio-api`. **O log group é o que distingue as funções.**
 
-### Campos da `studio-api`
+<Note>
+  Os casos de uso de exclusão chamam o logger da `studio-api` em alguns pontos, como "Galeria já removida; nada a excluir" e "Deleting message failed on publish stage". Esses registros saem com `service` igual a `studio-api`, mesmo vindo do worker de exclusão ou da requisição que o inicia. Os erros de página e de mensagem usam o logger próprio do worker.
+</Note>
+
+### Campos das APIs
 
 Cada registro de uma requisição carrega:
 
 - `requestId`, o id da requisição no API Gateway;
-- `routeKey`, por exemplo `POST /events`.
+- `routeKey`, por exemplo `POST /events` ou `POST /public/orders`.
 
-A API registra apenas erros inesperados, com a mensagem "Falha ao processar requisição" e o erro. Respostas 4xx esperadas, como validação e recurso não encontrado, não geram log da aplicação.
+As APIs registram apenas erros inesperados, com a mensagem "Falha ao processar requisição" e o erro. Respostas 4xx esperadas, como validação, recurso não encontrado, acesso negado e conflitos de seleção ou de pedido, não geram log da aplicação.
 
-Requisições recusadas pelo JWT authorizer não chegam à Lambda e não aparecem nesses logs.
+Requisições recusadas pelo JWT authorizer, ou pelo authorizer do link, não chegam à Lambda da API e não aparecem nesses logs.
 
 ### Campos do `imageProcessor`
 
-Cada registro de uma mensagem carrega `messageId` e `senderId`.
+Cada registro de uma mensagem carrega `messageId` e `senderId`, e `jobOrigin` (`S3_UPLOAD` ou `REPROCESS`) enquanto a mensagem é tratada.
 
 Os registros de falha no processamento trazem ainda:
 
@@ -42,22 +50,37 @@ Os registros de falha no processamento trazem ainda:
 | `stage` | A etapa em que a falha ocorreu |
 | `errorName`, `errorMessage`, `stack` | O erro |
 
-Valores de `stage`: `claim`, `getPhoto`, `headOriginal`, `validate`, `getOriginal`, `thumbnail`, `putThumbnail`, `preview`, `putPreview`, `markAvailable`, `markFailed` e `message`.
+Valores de `stage`: `claim`, `getPhoto`, `headOriginal`, `validate`, `getOriginal`, `process`, `putThumbnail`, `putPreview`, `markAvailable`, `markFailed`, `discard` e, nos registros do handler, `parse` e `message`.
 
 ### Mensagens do `imageProcessor`
 
 | Mensagem | Nível | Significado |
 | --- | --- | --- |
-| `Foto rejeitada por conteúdo inválido` | warn | Falha permanente. A foto foi marcada como `FAILED`. |
+| `Foto rejeitada por conteúdo inválido` | warn | Falha permanente. A foto foi marcada como `FAILED`, ou, num reprocessamento, manteve o estado. |
+| `Foto excluída durante o processamento` | warn | O registro sumiu no meio da tentativa. O worker descartou o que gravou. |
+| `Reprocessamento recusado` | warn | A reivindicação do reprocessamento foi recusada. O campo `reason` diz o motivo. |
 | `Erro ao processar foto` | error | Falha no caso de uso. A mensagem volta para a fila. |
 | `Erro ao processar mensagem SQS` | error | Falha no handler. A mensagem volta para a fila. |
+| `Mensagem SQS malformada descartada sem retry` | error | A mensagem não é um evento do S3 nem um job válido. Foi descartada. O campo `reason` diz por quê. |
 | `Parser da key incorreto` | warn | A chave do objeto não segue o padrão. A mensagem é descartada. |
 | `Record versionId ausente` | error | O evento do S3 veio sem versão. |
 | `Ignorando s3TestEvent` | info | Evento de teste enviado pelo S3 ao configurar a notificação. |
 
 Uma falha transitória costuma gerar dois registros de erro: um no caso de uso, com `stage` específico, e outro no handler, com `stage` igual a `message`.
 
-Uma reivindicação recusada, como a de uma mensagem duplicada, **não gera log**. O caso de uso retorna em silêncio.
+Uma reivindicação recusada no **processamento inicial**, como a de uma mensagem duplicada, **não gera log**. O caso de uso retorna em silêncio. No reprocessamento, a recusa gera o aviso acima.
+
+### Mensagens dos demais componentes
+
+| Origem | Mensagem | Nível | Significado |
+| --- | --- | --- | --- |
+| `deletePhotosGalleryProcessor` | `Erro ao processar mensagem de exclusão` | error | Uma mensagem de exclusão falhou e volta para a fila. |
+| Worker de exclusão de galeria | `Erro ao processar exclusão de fotos` | error | Falha numa página, com `stage` e `processingAttemptId`. |
+| Worker de exclusão de galeria | `Galeria já removida; nada a excluir` | info | Reentrega depois de a galeria sair. |
+| Reconciliador | `Reconciliação de exclusões de evento concluída` | info | Resumo de toda execução: `examined`, `completed`, `requeuedGalleries` e `failed`. |
+| Reconciliador | `Limpeza de evento parada; galerias reenfileiradas` | warn | Uma exclusão sem progresso foi retomada. |
+| Reconciliador | `Erro ao reconciliar exclusão de evento` | error | Uma exclusão falhou; o handler lança erro ao fim. |
+| `postConfirmation` | `User confirmation processed` | info | Cada confirmação, com `userName` e `userPoolId`. |
 
 ### Consultas úteis
 
@@ -87,9 +110,36 @@ fields @timestamp, photoId, eventId, stage, errorMessage
 | sort @timestamp desc
 ```
 
-## Alarme
+Reprocessamentos recusados, por motivo:
 
-Há um alarme, `PhotoProcessingDlqAlarm`.
+```
+fields @timestamp
+| filter message = "Reprocessamento recusado"
+| stats count() by reason
+```
+
+## Métricas
+
+O `imageProcessor` publica métricas customizadas pelo Powertools Metrics, no formato EMF, no namespace `Lumora`, com a dimensão `service` igual a `image-processor`. Os ids de foto e de evento ficam nos logs, nunca em dimensão de métrica.
+
+| Métrica | Unidade | Significado |
+| --- | --- | --- |
+| `PhotoProcessed` | contagem | Uma foto foi processada e publicada. |
+| `PhotoRejected` | contagem | Uma foto foi rejeitada por conteúdo inválido. |
+| `PhotoFailed` | contagem | A execução terminou com erro (a mensagem volta para a fila). |
+| `ProcessingDurationMs` | milissegundos | Duração do processamento, em cada execução que chega a um resultado. |
+| `ReprocessRefused` | contagem | Um reprocessamento teve a reivindicação recusada. |
+
+Nenhuma dessas métricas tem alarme. As demais funções não publicam métricas próprias.
+
+## Alarmes
+
+Há dois alarmes, um por DLQ, que publicam no mesmo tópico SNS.
+
+| Alarme | DLQ monitorada |
+| --- | --- |
+| `PhotoProcessingDlqAlarm` | Fila de processamento de imagens |
+| `DeletePhotosGalleryDlqAlarm` | Fila de exclusão de fotos e galerias |
 
 | Propriedade | Valor |
 | --- | --- |
@@ -97,13 +147,13 @@ Há um alarme, `PhotoProcessingDlqAlarm`.
 | Condição | Máximo maior ou igual a 1 |
 | Período | 60 segundos, um ponto de dados |
 | Dados ausentes | Tratados como normais |
-| Ação | Publica em um tópico SNS |
+| Ação | Publica em um tópico SNS, com assinatura por e-mail |
 
 O alarme indica ao menos uma mensagem visível na DLQ. Ele não determina o estado de uma foto: a falha pode ter ocorrido antes da reivindicação ou até ao interpretar a mensagem. Consulte os logs e o registro persistido para o diagnóstico.
 
-<Warning>
-  O template cria o tópico SNS, mas nenhuma assinatura. Sem um assinante, o alarme muda de estado e ninguém é avisado. Assine o tópico da saída `PhotoProcessingAlarmTopicArn`.
-</Warning>
+<Note>
+  O tópico tem uma assinatura por e-mail, criada a partir do parâmetro `AlarmEmail`. O destinatário precisa **confirmar** a assinatura na mensagem do SNS. Sem a confirmação, o alarme muda de estado e ninguém é avisado.
+</Note>
 
 O que fazer quando o alarme dispara está em [Solução de problemas](/developers/operations/troubleshooting#mensagens-na-dlq).
 
@@ -115,23 +165,27 @@ O resumo de upload, `GET /events/{eventId}/upload-summary`, é também uma ferra
 - `PROCESSING` que não diminui pode indicar falhas transitórias repetidas ou ausência de uma nova tentativa, inclusive por mensagens na DLQ;
 - `FAILED` indica arquivos rejeitados por conteúdo.
 
+Uma foto em reprocessamento **não aparece em `PROCESSING`**: ela mantém o estado que tinha até a nova tentativa concluir.
+
 ## O que não existe
 
 | Item | Situação |
 | --- | --- |
-| Métricas de negócio ou de processamento | Não há. Apenas as métricas padrão dos serviços AWS. |
+| Alarmes de erro das Lambdas, de 5xx da API ou de idade da fila | Não há. |
+| Alarme das métricas do processador | Não há. |
 | Tracing (X-Ray) | Não habilitado. |
 | Dashboard | Não há. |
-| Alarmes de erro das Lambdas, de 5xx da API ou de idade da fila | Não há. |
-| Log de requisições bem-sucedidas | A API não registra. |
+| Métricas das APIs, do worker de exclusão e do reconciliador | Não há. Apenas as métricas padrão dos serviços AWS. |
+| Log de requisições bem-sucedidas | As APIs não registram. |
 | Log de acesso do API Gateway | Não configurado. |
+| Log ou métrica da abertura e da montagem de pedidos | Não há. Um pedido que fica em `ASSEMBLING` não gera sinal. |
 | Correlação entre a requisição de upload e o processamento | Não há id comum. A ligação é o `photoId`. |
 
-O `README.md` do repositório `lumora` descreve um plano incremental de observabilidade (decisão D14), com métricas em EMF, mais alarmes e um dashboard. Desse plano, estão implementados os logs estruturados, a retenção de logs, a DLQ e o alarme da DLQ.
+O `README.md` do repositório `lumora` descreve um plano incremental de observabilidade (decisão D14), com métricas em EMF, mais alarmes e um dashboard. Desse plano, estão implementados os logs estruturados, a retenção de logs, as métricas EMF do processador, as DLQs e os alarmes delas.
 
 ## Dados sensíveis nos logs
 
-- A API não registra corpos de requisição nem tokens.
+- As APIs não registram corpos de requisição nem tokens. O token do link só trafega no header `x-access-token` e não é gravado pelo authorizer.
 - As respostas de validação não devolvem o valor enviado, apenas o campo e o código.
 - O `postConfirmation` registra `userName` e `userPoolId` a cada confirmação.
 - Os logs de falha do processamento incluem identificadores de foto, evento e galeria, mas não o nome original do arquivo.

@@ -14,6 +14,7 @@ Atualmente há um único ambiente configurado, `dev`:
 | Nome da stack | `lumora-dev` |
 | Região | `us-east-1` |
 | Perfil AWS | `lumora-dev` |
+| Parâmetro `AlarmEmail` | Informado em `parameter_overrides` |
 | Confirmação do changeset | Exigida a cada deploy |
 
 <Note>
@@ -33,7 +34,7 @@ sam deploy --config-env dev
 | Comando | O que faz |
 | --- | --- |
 | `sam validate --lint` | Valida o template. |
-| `sam build` | Empacota as três funções com o esbuild e constrói a layer do sharp. |
+| `sam build` | Empacota as sete funções com o esbuild e constrói a layer do sharp. |
 | `sam deploy` | Cria um changeset no CloudFormation, pede confirmação e aplica. |
 
 ### O que o build faz
@@ -55,18 +56,22 @@ Equivale a `sam sync --watch --config-env dev`. O SAM observa os arquivos e publ
 ## Depois do primeiro deploy
 
 1. Copie as saídas `ApiUrl`, `UserPoolId` e `UserPoolClientId` para `apps/web/.env.development`.
-2. Assine o tópico SNS da saída `PhotoProcessingAlarmTopicArn` para receber o alarme da DLQ. O template não cria assinatura.
+2. Confirme a assinatura de e-mail do SNS. O template já cria a assinatura, a partir do parâmetro `AlarmEmail`, mas o destinatário precisa confirmá-la na mensagem que o SNS envia. Sem a confirmação, os alarmes das duas DLQs não chegam.
 3. Crie um usuário, pela tela de cadastro ou com `pnpm create:test-user`.
 
-## Parâmetro `WebOrigin`
+## Parâmetros e valores fixos
 
-O template tem o parâmetro `WebOrigin`, com valor padrão `http://localhost:5173`. Ele define a origem aceita pelo CORS do bucket de fotos.
+| Item | Situação |
+| --- | --- |
+| `WebOrigin` | Padrão `http://localhost:5173`. Define a origem aceita pelo CORS do bucket de originais. O `samconfig.toml` não o sobrescreve: a stack `dev` aceita uploads apenas a partir do servidor de desenvolvimento local. Para publicar o frontend em outro endereço, informe o parâmetro no deploy. |
+| `AlarmEmail` | **Obrigatório**, sem valor padrão. O `samconfig.toml` o informa. Recebe os alarmes das duas DLQs. |
+| `PUBLIC_APP_URL` | **Não é parâmetro.** Está fixo em `http://localhost:5173` no ambiente da `studio-api`. Define o prefixo do link do cliente (`{PUBLIC_APP_URL}/g/{token}`). Para gerar links que apontem para outro endereço, altere o template. |
 
-O `samconfig.toml` não sobrescreve esse parâmetro. A stack `dev` aceita uploads apenas a partir do servidor de desenvolvimento local. Para publicar o frontend em outro endereço, informe o parâmetro no deploy.
+O frontend também não é parâmetro de nada: o repositório não o publica. Veja [Frontend](#frontend).
 
 ## Ordem de publicação de mudanças no fluxo de fotos
 
-A `studio-api` e o `imageProcessor` compartilham o formato do item de foto no DynamoDB. Uma mudança nesse formato precisa das duas funções atualizadas.
+A `studio-api`, a `public-api`, o `imageProcessor` e o `deletePhotosGallery` compartilham o formato dos itens do DynamoDB: foto, evento, galeria, seleção e pedido. Uma mudança nesse formato precisa de todas as funções que o leem ou gravam atualizadas.
 
 O `README.md` do repositório `lumora` registra a regra para esse caso:
 
@@ -74,7 +79,7 @@ O `README.md` do repositório `lumora` registra a regra para esse caso:
 - não misture escritores antigos e novos nem reverta apenas uma delas;
 - aguarde as invocações antigas terminarem, ao menos o timeout de 60 segundos do processador, antes de aceitar novos uploads.
 
-Como as três funções saem do mesmo template, um `sam deploy` atualiza todas no mesmo changeset.
+Como as sete funções saem do mesmo template, um `sam deploy` atualiza todas no mesmo changeset. Mensagens que já estão nas filas continuam com o formato antigo: ao mudar o formato de uma mensagem (`REPROCESS_PHOTO`, `SELECTED` ou `GALLERY`), o consumidor precisa aceitar os dois.
 
 ## Frontend
 
@@ -87,7 +92,7 @@ O repositório não define como o frontend é publicado. `pnpm --filter @photos/
 | Job | Etapas |
 | --- | --- |
 | `quality` | lint, verificação de formatação, typecheck, testes, testes com DynamoDB Local e build do frontend |
-| `infra` | verificação do lockfile do npm, `sam validate --lint` e `sam build` |
+| `infra` | `sam validate --lint` e `sam build` |
 
 O CI valida, mas não publica. Ele não tem credenciais AWS.
 
@@ -96,5 +101,8 @@ O CI valida, mas não publica. Ele não tem credenciais AWS.
 - **Nome fixo da tabela.** `lumora-app` é fixo no template. Uma segunda stack na mesma conta e região falha por conflito de nome.
 - **Sem proteção contra exclusão.** A tabela e o bucket não têm `DeletionPolicy` nem `UpdateReplacePolicy`. Excluir a stack, ou alterar uma propriedade que force a substituição do recurso, remove a tabela. Um bucket com objetos impede a exclusão da stack.
 - **Versão do sharp.** A versão no `Makefile` da layer deve ser igual à de `services/api/package.json`.
-- **Rotas em dois lugares.** Uma rota nova precisa ser declarada no template e no `switch` de `studioApi.ts`.
-- **CORS da API.** A API aceita qualquer origem. A proteção das rotas é o JWT, e não a origem.
+- **Rotas em dois lugares.** Uma rota nova precisa ser declarada no template e no `switch` de `studioApi.ts` ou de `publicApi.ts`. Uma rota pública também precisa do authorizer `PublicAccessAuthorizer` e do throttling no template; o teste `tests/infra-template.test.ts` verifica isso para as rotas existentes.
+- **CORS da API.** A API aceita qualquer origem. A proteção das rotas é o JWT ou o token do link, e não a origem.
+- **Mídia sem restrição por link.** A distribuição do CloudFront não usa URLs assinadas. Veja [Acesso do cliente](/developers/flows/public-access#entrega-da-mídia).
+- **Cache do authorizer.** A resposta do authorizer do link fica em cache por 60 segundos. Uma mudança na regra do authorizer só vale para tokens novos depois desse prazo.
+- **Mensagens nas filas durante o deploy.** Uma versão nova do `imageProcessor` ou do `deletePhotosGallery` passa a consumir mensagens já enfileiradas por versões anteriores.
