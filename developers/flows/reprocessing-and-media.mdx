@@ -61,7 +61,7 @@ sequenceDiagram
 | A foto não existe | `404 NOT_FOUND` |
 | O status não é `AVAILABLE` nem `FAILED`, ou a foto não tem `sourceVersionId` | `409 PHOTO_NOT_REPROCESSABLE` |
 
-Uma foto sem `sourceVersionId` nunca chegou a ter um original fixado, então não há de onde regenerar. Uma foto em `PENDING` ou `PROCESSING` ainda não terminou o primeiro processamento.
+Uma foto sem `sourceVersionId` nunca chegou a ter um original fixado, então não há de onde regenerar. Uma foto em `PENDING_UPLOAD` ou `PROCESSING` ainda não terminou o primeiro processamento.
 
 A API **não altera o registro da foto**. Ela só publica uma mensagem do tipo `REPROCESS_PHOTO` com `pgId`, `eventId`, `galleryId`, `photoId`, `sourceVersionId` e um `requestId` novo (UUID). Por isso, repetir o pedido publica outro job; quem decide se o segundo job faz alguma coisa é a reivindicação no processador.
 
