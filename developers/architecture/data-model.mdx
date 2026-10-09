@@ -132,6 +132,20 @@ Os quatro últimos atributos controlam a concorrência do processamento.
 
 `photoId` e `ownerId`. O item existe só para garantir unicidade: a sua chave contém o hash, e o seu conteúdo aponta para a foto já registrada.
 
+### Seleção do cliente
+
+Um item por foto selecionada, na partição `GALLERY#{galleryId}`, com `SK` `SEL#{photoId}`. Atributos: `ownerId`, `eventId`, `galleryId`, `photoId` e `selectedAt`. A chave não leva o `sub` do fotógrafo: a galeria só é endereçada depois de encontrada no evento do link.
+
+O item do evento guarda o estado agregado da seleção:
+
+| Atributo | Significado |
+| --- | --- |
+| `selectionCount` | Fotos selecionadas no evento, somando as galerias. |
+| `selectionRevision` | Só cresce, a cada mudança da seleção. Cerca leituras coerentes. |
+| `activeOrderId` | Pedido ativo. Enquanto existir, a seleção está congelada. |
+
+Veja [Seleção de fotos](/developers/flows/photo-selection).
+
 ## Campos de concorrência da foto
 
 | Campo | Gravado quando | Removido quando | Problema que resolve |
