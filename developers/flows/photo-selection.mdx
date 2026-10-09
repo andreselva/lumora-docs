@@ -28,7 +28,7 @@ A seleção é formada por **itens** e por **três atributos no evento**.
 ```mermaid
 erDiagram
   EVENT ||--o{ GALLERY : contem
-  GALLERY ||--o{ SELECTION_ITEM : "tem seleções"
+  GALLERY ||--o{ SELECTION_ITEM : "tem selecoes"
   EVENT {
     number selectionCount
     number selectionRevision
@@ -36,8 +36,8 @@ erDiagram
     map package
   }
   SELECTION_ITEM {
-    string PK "GALLERY#galleryId"
-    string SK "SEL#photoId"
+    string partition "GALLERY#galleryId"
+    string sort "SEL#photoId"
     string ownerId
     string eventId
   }
