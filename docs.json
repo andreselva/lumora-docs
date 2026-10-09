@@ -72,6 +72,7 @@
             "pages": [
               "developers/flows/authentication",
               "developers/flows/account-bootstrap",
+              "developers/flows/photo-and-gallery-deletion",
               "developers/flows/events-and-galleries",
               "developers/flows/event-deletion-reconciliation",
               "developers/flows/photo-upload",
