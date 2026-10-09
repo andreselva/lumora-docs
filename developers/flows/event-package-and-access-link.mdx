@@ -11,7 +11,7 @@ Preparar um evento para que o cliente consiga abrir as galerias, escolher fotos 
 2. **Publicar o evento**: tirá-lo de `DRAFT`.
 3. **Gerar o link de acesso**: o endereço, com um token secreto, que o cliente recebe.
 
-Esta página descreve essas três operações, as regras que as ligam e o que acontece quando elas disputam entre si. O que o cliente faz com o link é assunto do fluxo de acesso do cliente.
+Esta página descreve essas três operações, as regras que as ligam e o que acontece quando elas disputam entre si. O que o cliente faz com o link está em [Acesso do cliente](/developers/flows/public-access).
 
 ## Visão de ponta a ponta
 
@@ -278,7 +278,7 @@ Os identificadores são fictícios.
 | Evento | `USER#{sub}` | `EVENT#{eventId}` | `package`, `orderCount`, `status`, `accessTokenHash`, `accessLinkCreatedAt`, `accessLinkExpiresAt`, `accessLinkRevokedAt` |
 | Registro do token | `PUBLIC_TOKEN#{tokenHash}` | `PUBLIC_GALLERY` | `id` (o `sub` do fotógrafo), `eventId`, `tokenHash`, `expiresAt`, `createdAt`, `updatedAt` |
 
-O registro do token fica numa partição própria, indexada pelo hash. É assim que o authorizer encontra dono e evento a partir do token, sem ler o evento. Ele não é a fonte da validade: o authorizer só confirma que o token existe e tem o formato correto.
+O registro do token fica numa partição própria, indexada pelo hash. É assim que o authorizer encontra dono e evento a partir do token, sem ler o evento. Ele não é a fonte da validade: o authorizer só confirma que o token existe e tem o formato correto. Veja [Acesso do cliente](/developers/flows/public-access#etapa-1-o-authorizer).
 
 A chave de ordenação do registro é o literal `PUBLIC_GALLERY`, nome anterior à mudança do link de galeria para evento. O link hoje é do evento e alcança todas as suas galerias.
 

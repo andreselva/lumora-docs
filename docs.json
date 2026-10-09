@@ -74,6 +74,7 @@
               "developers/flows/account-bootstrap",
               "developers/flows/events-and-galleries",
               "developers/flows/event-package-and-access-link",
+              "developers/flows/public-access",
               "developers/flows/event-deletion-reconciliation",
               "developers/flows/photo-upload",
               "developers/flows/image-processing"
