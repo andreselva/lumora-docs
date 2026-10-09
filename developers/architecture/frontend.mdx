@@ -28,7 +28,7 @@ apps/web/src
 │   ├── pages          páginas
 │   ├── events         componentes de evento
 │   └── galleries      componentes de galeria e o UploadManager
-├── gallery            área do cliente (/g/:token/*), ainda sem conteúdo
+├── public             área do cliente (/g/:token/*): sessão, galerias, fotos, seleção e pedido
 ├── components         layout de página e componentes de UI
 └── mocks              handlers MSW, opcionais
 ```
@@ -36,7 +36,7 @@ apps/web/src
 `App.tsx` declara duas áreas, cada uma carregada com `lazy`:
 
 - `/app/*`: o Lumora Studio, área do fotógrafo. A raiz `/` redireciona para `/app`.
-- `/g/:token/*`: a galeria do cliente. Atualmente existe apenas o layout e o contexto que guarda o token; não há páginas nem chamadas à API.
+- `/g/:token/*`: a área pública do cliente, sem conta. O token do link fica só em memória e acompanha cada chamada no header `x-access-token`. Veja [Acesso público do cliente](/developers/flows/public-client-access).
 
 ### Rotas do Studio
 
