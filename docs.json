@@ -71,9 +71,9 @@
             "group": "Fluxos",
             "pages": [
               "developers/flows/authentication",
+              "developers/flows/public-client-access",
               "developers/flows/account-bootstrap",
               "developers/flows/events-and-galleries",
-              "developers/flows/public-client-access",
               "developers/flows/event-deletion-reconciliation",
               "developers/flows/photo-upload",
               "developers/flows/image-processing"
