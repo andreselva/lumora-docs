@@ -50,7 +50,7 @@ O frontend cobre esse caso na página **Minha conta**:
 2. Se a resposta for 404, a página dispara `POST /me/bootstrap`, uma única vez.
 3. O resultado é gravado no cache como o perfil.
 
-No backend, `routes/bootstrapMe.ts`:
+No backend, `controllers/bootstrapMe.ts`:
 
 1. lê o `sub` do token;
 2. consulta o perfil e, se existir, o devolve;

@@ -299,7 +299,7 @@ O conteúdo não pode produzir derivados válidos, e repetir não mudaria o resu
 | Formato real diferente de JPEG | `SharpProcessor.validateJpeg` |
 | Falha do sharp ao redimensionar | `SharpProcessor.process` |
 
-**Tratamento:** a foto é marcada como `FAILED` pela tentativa que a detém, o caso de uso registra um aviso e retorna sem erro. A mensagem é confirmada. Não há nova tentativa.
+**Tratamento:** a foto é marcada como `FAILED` pela tentativa que a detém, o caso de uso registra um aviso e retorna sem erro. A mensagem é confirmada. Não há nova tentativa automática. O fotógrafo pode pedir um reprocessamento, que reaproveita o mesmo original; veja [Reprocessamento e mídia](/developers/flows/reprocessing-and-media).
 
 Se a própria gravação de `FAILED` falhar, o erro é propagado e a mensagem volta para a fila.
 
@@ -346,7 +346,7 @@ No frontend, o polling desiste após 3 minutos sem mudança e mostra que há fot
 | --- | --- |
 | Consumo da fila | `services/api/src/handlers/imageProcessor.ts` |
 | Orquestração e classificação de falhas | `services/api/src/application/photos/ProcessUploadedPhoto.ts` |
-| Reivindicação e conclusão | `services/api/src/repositories/dynamodb/DynamoDbPhotoRepository.ts` |
+| Reivindicação e conclusão | `services/api/src/infra/dynamodb/DynamoDbPhotoRepository.ts` |
 | Geração de derivados | `services/api/src/shared/sharp/SharpProcessor.ts` |
-| Leitura por versão e gravação | `services/api/src/repositories/s3/S3PhotoStorage.ts` |
+| Leitura por versão e gravação | `services/api/src/infra/s3/S3PhotoStorage.ts` |
 | Testes de concorrência | `DynamoDbPhotoRepository.dynamodb.spec.ts`, no mesmo diretório do repositório |

@@ -20,7 +20,7 @@ Separar o backend em camadas com dependência em um só sentido:
 
 - o **domínio** (`src/domain`) contém entidades, erros e as interfaces dos repositórios;
 - a **aplicação** (`src/application`) contém os casos de uso, que recebem as interfaces pelo construtor;
-- a **infraestrutura** (`src/repositories`) implementa as interfaces sobre DynamoDB e S3;
+- a **infraestrutura** (`src/infra`) implementa as interfaces sobre DynamoDB, S3 e SQS;
 - os **handlers** instanciam as implementações e as entregam aos casos de uso.
 
 As interfaces expressam intenções do domínio, e não operações do banco. `PhotoRepository` tem `register`, `claimProcessing` e `markAvailable`, e não `put` ou `update`.
@@ -44,9 +44,9 @@ As interfaces expressam intenções do domínio, e não operações do banco. `P
 
 A separação não é completa:
 
-- `IPhotoStorage` está em `src/contracts/photo`, e não em `src/domain`.
-- As rotas `/me` e `/me/bootstrap` e o handler `postConfirmation` tratam uma exceção do SDK do DynamoDB diretamente.
+- `IPhotoStorage` está em `src/application/ports`, e não em `src/domain`.
+- `controllers/bootstrapMe.ts` e o handler `postConfirmation` tratam uma exceção do SDK do DynamoDB diretamente.
 - `ProcessUploadedPhoto` chama `SharpProcessor` e `S3KeyBuilder` como classes estáticas, sem porta.
 - As entidades importam `luxon` e `node:crypto`.
 
-O `README.md` afirma que casos de uso e regras ficam em `packages/domain`. No código, eles ficam em `services/api/src`. O pacote `packages/domain` contém apenas `Money`, dois enums e a geração de ids, e não é importado pelo backend.
+O `README.md` afirma que casos de uso e regras ficam em `packages/domain`. No código, eles ficam em `services/api/src`. O pacote `packages/domain` não existe mais: `Money` vive em `services/api/src/domain/money` e `Quote`, em `domain/order`.

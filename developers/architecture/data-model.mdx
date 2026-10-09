@@ -5,7 +5,7 @@ description: "A tabela única do DynamoDB: entidades, chaves, padrões de acesso
 
 O Lumora guarda todos os metadados em uma única tabela DynamoDB, `lumora-app`. Os arquivos ficam no S3; a tabela guarda apenas referências lógicas a eles.
 
-As chaves são montadas em `services/api/src/repositories/dynamodb/keys.ts`.
+As chaves são montadas em `services/api/src/infra/dynamodb/keys.ts`.
 
 ## Estrutura da tabela
 
@@ -13,7 +13,7 @@ As chaves são montadas em `services/api/src/repositories/dynamodb/keys.ts`.
 | --- | --- |
 | Chave de partição | `PK`, string |
 | Chave de ordenação | `SK`, string |
-| Índice global | `GSI1`, com `GSI1PK` e `GSI1SK`, projeção completa. A exclusão de eventos usa a partição esparsa `EVENT_DELETION#PENDING` para localizar reconciliações vencidas. |
+| Índice global | `GSI1`, com `GSI1PK` e `GSI1SK`, projeção completa. Dois usos: a lista de pedidos do fotógrafo e a partição esparsa `EVENT_DELETION#PENDING`, que localiza reconciliações de exclusão vencidas. |
 | TTL | Não configurado |
 | Modo de capacidade | Sob demanda |
 
@@ -21,8 +21,10 @@ As chaves são montadas em `services/api/src/repositories/dynamodb/keys.ts`.
 
 Há duas famílias de partição:
 
-- a **partição do fotógrafo**, `USER#{sub}`, com o perfil e os eventos;
+- a **partição do fotógrafo**, `USER#{sub}`, com o perfil, os eventos e os tombstones de exclusão de evento;
 - a **partição do evento**, `USER#{sub}#EVENT#{eventId}`, com as galerias, as fotos e as marcas de deduplicação daquele evento.
+
+Quatro tipos de item ficam fora dessas famílias, porque são alcançados por um identificador que não carrega o `sub`: o token do link do cliente, a seleção do cliente e o pedido com seus itens.
 
 | Entidade | `PK` | `SK` |
 | --- | --- | --- |
@@ -32,6 +34,11 @@ Há duas famílias de partição:
 | Foto | `USER#{sub}#EVENT#{eventId}` | `PHOTO#{galleryId}#{photoId}` |
 | Fingerprint | `USER#{sub}#EVENT#{eventId}` | `FP#{galleryId}#{sha256}` |
 | Token do link do cliente | `PUBLIC_TOKEN#{sha256}` | `PUBLIC_GALLERY` |
+| Foto selecionada | `GALLERY#{galleryId}` | `SEL#{photoId}` |
+| Pedido | `ORDER#{orderId}` | `META` |
+| Item de um pedido | `ORDER#{orderId}` | `ITEM#{assemblyId}#{photoId}` |
+| Tombstone de exclusão de evento | `USER#{sub}` | `EVENT_DELETION#{eventId}` |
+| Lease de exclusão de fotos escolhidas | `USER#{sub}#EVENT#{eventId}` | `DELETE_SELECTED#{operationId}#{step}` |
 
 ```mermaid
 erDiagram
@@ -39,6 +46,10 @@ erDiagram
   EVENT ||--|{ GALLERY : "contém"
   GALLERY ||--o{ PHOTO : "contém"
   PHOTO ||--|| FINGERPRINT : "deduplicada por"
+  EVENT ||--o| ACCESS_TOKEN : "tem no máximo um"
+  GALLERY ||--o{ SELECTION : "recebe"
+  EVENT ||--o{ ORDER : "gera"
+  ORDER ||--o{ ORDER_ITEM : "contém"
 ```
 
 ### Exemplo
@@ -76,6 +87,11 @@ Os repositórios de galeria ainda conferem o atributo `ownerId` do item como seg
 | Contar fotos do evento por estado | `Query` na partição do evento com `begins_with(SK, 'PHOTO#')`, projetando só `status`, todas as páginas |
 | Ler uma foto | `GetItem` na partição do evento |
 | Verificar duplicidade de arquivo | escrita condicional do item `FP#...` |
+| Reconhecer o token do cliente | `GetItem` em `PUBLIC_TOKEN#{sha256}` / `PUBLIC_GALLERY` |
+| Listar a seleção de uma galeria | `Query` em `GALLERY#{galleryId}` com `begins_with(SK, 'SEL#')` |
+| Ler um pedido | `GetItem` em `ORDER#{orderId}` / `META` |
+| Listar pedidos do fotógrafo | `Query` no `GSI1` com `GSI1PK = USER#{sub}` e `begins_with(GSI1SK, 'ORDER#')` |
+| Achar exclusões de evento vencidas | `Query` no `GSI1` com `GSI1PK = EVENT_DELETION#PENDING` e `GSI1SK` até agora |
 
 Duas escolhas de ordenação seguem dos ULIDs:
 
@@ -130,8 +146,11 @@ Todas as listagens são `Query`. Não há `Scan` em nenhum repositório.
 | `processingAttemptId` | Tentativa de processamento em andamento |
 | `processingLeaseUntil` | Validade da tentativa em andamento, em milissegundos desde a época Unix |
 | `completedAttemptId` | Tentativa que concluiu o processamento |
+| `failureReason` | Motivo da falha, quando o status é `FAILED` |
+| `previewWidth`, `previewHeight` | Dimensões da preview publicada. Ausentes em fotos publicadas antes de existirem |
+| `reprocessRequestId`, `reprocessAttemptId` | Último pedido de reprocessamento aplicado e a tentativa que o aplicou |
 
-Os quatro últimos atributos controlam a concorrência do processamento.
+`sourceVersionId`, `processingAttemptId`, `processingLeaseUntil` e `completedAttemptId` controlam a concorrência do processamento. Os campos de reprocessamento controlam a idempotência dele.
 
 ### Token do link do cliente
 
@@ -162,7 +181,9 @@ Veja [Seleção de fotos](/developers/flows/photo-selection).
 | `sourceVersionId` | Na primeira reivindicação | Nunca | Garante que só uma versão do objeto seja processada, mesmo que o arquivo seja enviado de novo para a mesma chave. |
 | `processingAttemptId` | A cada reivindicação | Ao concluir | Identifica quem é o dono atual do processamento. Uma tentativa antiga não consegue concluir. |
 | `processingLeaseUntil` | A cada reivindicação | Ao concluir | Permite que outra tentativa assuma se a atual morrer sem concluir. |
-| `completedAttemptId` | Ao concluir | Nunca | Aponta para a pasta dos derivados publicados e torna a conclusão repetível. |
+| `completedAttemptId` | Ao concluir, e de novo a cada reprocessamento bem-sucedido | Nunca | Aponta para a pasta dos derivados publicados e torna a conclusão repetível. |
+| `reprocessRequestId` | Ao concluir ou rejeitar um reprocessamento | Nunca | Impede que o mesmo pedido de reprocessamento seja aplicado duas vezes. |
+| `reprocessAttemptId` | Ao concluir ou rejeitar um reprocessamento | Nunca | Reconhece a reentrega da tentativa que já terminou. |
 
 `processingLeaseUntil` é um número comparado em expressões condicionais. Não é um atributo de TTL: o DynamoDB não remove nada quando ele vence.
 
@@ -189,9 +210,10 @@ As operações abaixo gravam mais de um item e usam `TransactWriteItems`:
 | --- | --- | --- |
 | Criar evento | evento e galeria principal | Não existe evento sem galeria principal. |
 | Criar galeria | galeria e `galleryCount` do evento | A galeria só é criada se o evento existir. |
-| Excluir galeria | galeria e `galleryCount` do evento | A galeria principal não é excluída. |
+| Excluir galeria | galeria e `galleryCount` do evento | A galeria principal não é excluída. Acontece depois de as fotos serem removidas. |
+| Remover foto | foto, fingerprint, seleção e contadores do evento | A vaga da seleção é devolvida junto com a foto. Veja [Exclusão de fotos e galerias](/developers/flows/photo-and-gallery-deletion). |
 | Registrar foto | fingerprint, foto, `registeredPhotoCount` do evento e verificação da galeria | Um arquivo é registrado uma vez por galeria, e só em galeria existente. |
-| Excluir evento | evento ativo e tombstone `EVENT_DELETION` | A remoção visível do evento e o registro da limpeza pendente acontecem atomicamente. |
+| Excluir evento | evento ativo, tombstone `EVENT_DELETION` e token do link, se houver | A remoção visível do evento, o registro da limpeza pendente e o fim do acesso do cliente acontecem atomicamente. |
 | Gerar link do cliente | evento, token novo e token anterior | O evento tem um único link válido, e só com pacote definido. |
 
 As transições do processamento, ao contrário, usam um único `UpdateItem` condicional sobre a foto, sem transação e sem tocar no evento.

@@ -3,12 +3,12 @@ title: "Visão geral da arquitetura"
 description: "Os componentes do Lumora, a responsabilidade de cada um e os dois caminhos que os dados percorrem."
 ---
 
-O Lumora é uma aplicação serverless na AWS. Não há servidor nem processo permanente: a lógica roda em três funções Lambda, acionadas por requisições HTTP, por um gatilho do Cognito e por uma fila.
+O Lumora é uma aplicação serverless na AWS. Não há servidor nem processo permanente: a lógica roda em sete funções Lambda, acionadas por requisições HTTP, por um gatilho do Cognito, por duas filas e por um agendamento.
 
 O sistema tem dois caminhos de dados distintos:
 
-- o **caminho de API**, síncrono, por onde passam metadados: perfil, eventos, galerias e registros de fotos;
-- o **caminho de fotos**, por onde passam os arquivos. Os bytes vão do navegador direto para o S3 e nunca atravessam a API.
+- o **caminho de API**, síncrono, por onde passam metadados: perfil, eventos, galerias, registros de fotos, seleção e pedidos. Tem duas entradas, a do fotógrafo (JWT do Cognito) e a do cliente (token do link);
+- o **caminho de fotos**, por onde passam os arquivos. Os bytes vão do navegador direto para o S3 e nunca atravessam a API. Os derivados voltam ao navegador por uma distribuição CloudFront.
 
 ## Componentes
 
@@ -20,40 +20,66 @@ flowchart LR
     C[Cognito<br/>User Pool]
     G[API Gateway<br/>HTTP API]
     A[Lambda<br/>studio-api]
+    PA[Lambda<br/>public-api]
+    Z[Lambda<br/>public-access-authorizer]
     P[Lambda<br/>postConfirmation]
     D[(DynamoDB<br/>lumora-app)]
-    S[(S3<br/>bucket de fotos)]
+    S[(S3<br/>PhotosBucket)]
+    M[(S3<br/>MediaBucket)]
+    CF[CloudFront]
     Q[SQS<br/>fila de processamento]
     I[Lambda<br/>imageProcessor]
+    X[SQS<br/>fila de exclusão]
+    W[Lambda<br/>deletePhotosGallery]
+    R[Lambda<br/>eventDeletionReconciler]
   end
 
   B -- login SRP --> C
   B -- JWT + JSON --> G
   G -- valida JWT --> C
   G --> A
+  G -- x-access-token --> Z
+  G --> PA
   A --> D
-  A -- assina POST e GET --> S
+  PA --> D
+  Z --> D
+  A -- assina POST --> S
+  A -- reprocessar --> Q
+  A -- excluir --> X
+  X --> W
+  W --> S
+  W --> M
+  W --> D
+  R --> D
+  R --> X
   C -- PostConfirmation --> P
   P --> D
   B -- presigned POST --> S
   S -- ObjectCreated --> Q
   Q --> I
   I --> S
+  I --> M
   I --> D
+  B -- GET derivados --> CF
+  CF --> M
 ```
 
 | Componente | Responsabilidade |
 | --- | --- |
-| Navegador (React) | Interface do fotógrafo. Mantém a sessão Cognito, chama a API e envia os arquivos direto ao S3. |
+| Navegador (React) | Interface do fotógrafo e do cliente. O fotógrafo mantém a sessão Cognito, chama a API e envia os arquivos direto ao S3. O cliente usa o token do link. |
 | Cognito User Pool | Cadastro, login e emissão dos tokens. É a única fonte de identidade do fotógrafo. |
-| API Gateway (HTTP API) | Expõe as rotas e valida o JWT antes de invocar a Lambda. |
-| Lambda `studio-api` | Todas as rotas do fotógrafo. Lê e grava metadados e emite credenciais temporárias de upload e de leitura. |
+| API Gateway (HTTP API) | Expõe as rotas e valida o JWT, ou chama o authorizer do cliente, antes de invocar a Lambda. |
+| Lambda `studio-api` | Rotas do fotógrafo. Lê e grava metadados, emite credenciais temporárias de upload e publica jobs de exclusão e reprocessamento. |
+| Lambda `public-api` e `public-access-authorizer` | Rotas `/public/*` do cliente: sessão, fotos, seleção e pedido. O authorizer reconhece o token do link. |
 | Lambda `postConfirmation` | Cria o perfil do fotógrafo quando o cadastro é confirmado no Cognito. |
-| DynamoDB `lumora-app` | Tabela única com perfis, eventos, galerias, fotos e marcas de deduplicação. |
+| DynamoDB `lumora-app` | Tabela única com perfis, eventos, galerias, fotos, seleção, pedidos, tokens de link e marcas de deduplicação. |
 | S3 (`PhotosBucket`) | Guarda os originais. Privado e versionado. |
 | S3 (`MediaBucket`) e CloudFront | O bucket guarda os derivados. A distribuição os entrega ao navegador. |
-| SQS | Recebe os eventos de criação de objeto do S3 e desacopla o upload do processamento. Tem uma DLQ. |
-| Lambda `imageProcessor` | Consome a fila, valida o original, gera thumbnail e preview e atualiza o estado da foto. |
+| SQS, processamento | Recebe os eventos de criação de objeto do S3 e os pedidos de reprocessamento. Tem uma DLQ. |
+| Lambda `imageProcessor` | Consome a fila, valida o original, gera thumbnail e preview com marca d'água e atualiza o estado da foto. |
+| SQS, exclusão | Recebe o trabalho de exclusão de fotos e galerias. Tem uma DLQ. |
+| Lambda `deletePhotosGallery` | Remove fotos e galerias em páginas, nos dois buckets e no DynamoDB. |
+| Lambda `eventDeletionReconciler` | Agendada a cada 15 minutos, reenfileira a limpeza parada de eventos excluídos. |
 
 Os detalhes de cada serviço estão em [Infraestrutura](/developers/architecture/infrastructure).
 
@@ -121,33 +147,37 @@ stateDiagram-v2
   PROCESSING --> AVAILABLE: derivados gravados
   PROCESSING --> FAILED: conteúdo inválido
   PROCESSING --> PROCESSING: nova tentativa após lease expirado
-  AVAILABLE --> [*]
-  FAILED --> [*]
+  AVAILABLE --> AVAILABLE: reprocessamento publica novos derivados
+  FAILED --> AVAILABLE: reprocessamento bem-sucedido
+  AVAILABLE --> [*]: exclusão
+  FAILED --> [*]: exclusão
 ```
 
-O enum `PhotoStatusEnum` também declara `ARCHIVED`. Atualmente nenhum código leva uma foto a esse estado.
+Durante um reprocessamento a foto não muda de estado. Veja [Reprocessamento e mídia](/developers/flows/reprocessing-and-media). O enum `PhotoStatusEnum` também declara `ARCHIVED`. Atualmente nenhum código leva uma foto a esse estado.
 
 ## Onde cada parte vive no código
 
 | Assunto | Caminho |
 | --- | --- |
-| Rotas e roteamento | `services/api/src/handlers/studioApi.ts` |
-| Consumidor da fila | `services/api/src/handlers/imageProcessor.ts` |
-| Gatilho do Cognito | `services/api/src/handlers/postConfirmation.ts` |
+| Rotas do fotógrafo | `services/api/src/handlers/api/studioApi.ts` |
+| Rotas do cliente | `services/api/src/handlers/api/publicApi.ts` e `handlers/authorizer/publicAccessAuthorizer.ts` |
+| Consumidores de fila | `services/api/src/handlers/sqs/imageProcessor.ts` e `deletePhotosGalleryProcessor.ts` |
+| Reconciliador agendado | `services/api/src/handlers/schedule/eventDeletionReconciler.ts` |
+| Gatilho do Cognito | `services/api/src/handlers/cognito/postConfirmation.ts` |
 | Casos de uso | `services/api/src/application` |
-| Entidades e portas | `services/api/src/domain` |
-| Persistência | `services/api/src/repositories` |
+| Entidades e repositórios | `services/api/src/domain` |
+| Persistência e integrações | `services/api/src/infra` |
 | Infraestrutura | `infra/template.yaml` |
 | Upload no navegador | `apps/web/src/studio/galleries/uploadManager.ts` |
-| Chamadas à API | `apps/web/src/studio/hooks` |
+| Chamadas à API | Um hook por operação, ao lado da tela que o usa, em `apps/web/src/studio/*` e `apps/web/src/public` |
 
 ## Princípios que atravessam o sistema
 
 Estes princípios aparecem em várias partes do código e explicam muitas decisões locais:
 
-1. **O dono vem do token.** O `sub` é lido de `requestContext.authorizer.jwt.claims.sub` e de nenhum outro lugar.
+1. **O dono vem do token.** Nas rotas do fotógrafo, o `sub` é lido de `requestContext.authorizer.jwt.claims.sub` e de nenhum outro lugar. Nas rotas do cliente, dono e evento vêm do registro do token, nunca da requisição.
 2. **Alheio é igual a inexistente.** Recurso de outro fotógrafo responde 404, nunca 403.
-3. **Arquivos não passam pela API.** A `studio-api` só emite credenciais. O `imageProcessor` é a única função que lê os bytes de uma foto.
+3. **Arquivos não passam pela API.** A `studio-api` só emite credenciais de upload. O `imageProcessor` é a única função que lê os bytes de uma foto. As funções de exclusão só apagam objetos.
 4. **Escritas que mudam estado são condicionais.** Transições usam `ConditionExpression`, de modo que repetir uma operação não a aplica duas vezes.
 5. **Chaves do S3 não usam o nome original do arquivo.** O nome fica apenas no DynamoDB.
 6. **DTOs de evento, galeria e foto omitem campos internos.** A conversão não inclui campos explícitos de `ownerId` nem chaves do S3. Os tickets de upload e as URLs assinadas expõem os caminhos necessários ao acesso, que contêm o identificador do fotógrafo. Isso não é uma garantia de sigilo desses identificadores.

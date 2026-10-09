@@ -25,7 +25,7 @@ pnpm install
 `services/api` tem também um `package-lock.json` do npm. Ele existe porque o build das Lambdas, feito pelo SAM, instala as dependências com `npm ci` dentro dessa pasta, fora do workspace do pnpm.
 
 <Warning>
-  Ao alterar dependências de `services/api`, atualize os dois lockfiles: o do pnpm, na raiz, e o `package-lock.json` da pasta. O CI executa `npm ci --dry-run` para detectar divergência.
+  Ao alterar dependências de `services/api`, atualize os dois lockfiles: o do pnpm, na raiz, e o `package-lock.json` da pasta. O `sam build` falha se o `npm ci` não conseguir instalar a partir do lockfile.
 </Warning>
 
 ## Frontend
@@ -62,7 +62,7 @@ VITE_ENABLE_MSW=true pnpm --filter @photos/web dev
 O MSW só inicia em modo de desenvolvimento e com essa variável igual a `true`. Reinicie o Vite e recarregue a página ao mudar o valor.
 
 <Warning>
-  Com o MSW ligado, as rotas de galerias e fotos são respondidas por dados fictícios, e não pela API. Os handlers são anteriores à implementação dessas rotas no backend. Use o MSW apenas para trabalho de interface.
+  Com o MSW ligado, as rotas de galerias e fotos do Studio, incluindo exclusão e reprocessamento, são respondidas por dados fictícios, e não pela API. Os handlers são anteriores à implementação dessas rotas no backend. A área do cliente (`/public/*`) não tem mocks e usa a API real. Use o MSW apenas para trabalho de interface.
 </Warning>
 
 ## Backend
@@ -87,7 +87,7 @@ pnpm test
 Executa dois projetos do Vitest:
 
 - o do frontend, com jsdom e Testing Library;
-- o de Node, com os testes de `packages`, `services` e `scripts`.
+- o de Node, com os testes de `packages`, `services`, `scripts` e `tests`, onde ficam os testes de paridade de contratos e do template.
 
 Esses testes não precisam de Docker nem de credenciais AWS.
 
@@ -120,6 +120,15 @@ pnpm typecheck
 ```
 
 O CI executa esses três comandos, os dois conjuntos de testes e o build do frontend. Veja `.github/workflows/ci.yml`.
+
+## Processar imagens sem a AWS
+
+```bash
+pnpm process:local <entrada> <saída>
+pnpm process:image <foto.jpg>
+```
+
+Os dois comandos rodam o mesmo núcleo de processamento da Lambda sobre arquivos locais, sem fila nem S3. `process:local` trata uma pasta e grava miniatura, preview e um arquivo de resultados. `process:image` trata uma foto. A preview recebe a marca d'água do Lumora, e `process:local` aceita `--no-watermark` ou `--watermark <arquivo>`. Veja [Reprocessamento e mídia](/developers/flows/reprocessing-and-media).
 
 ## Usuário de teste
 
@@ -163,4 +172,4 @@ O repositório não usa LocalStack. O `README.md` registra o motivo: ele emulari
 
 ## Divergências do `README.md`
 
-O `README.md` do repositório `lumora` cita comandos e artefatos que não existem atualmente: `pnpm process:local`, os scripts `verify-event`, `generate-fixtures` e `delete-event`, testes com Playwright e o perfil AWS `photos-dev`. Use os comandos desta página, que correspondem ao `package.json` e ao `samconfig.toml` atuais.
+O `README.md` do repositório `lumora` cita comandos e artefatos que não existem atualmente: os scripts `verify-event`, `generate-fixtures` e `delete-event`, a pasta `fixtures/`, testes com Playwright e o perfil AWS `photos-dev`. Use os comandos desta página, que correspondem ao `package.json` e ao `samconfig.toml` atuais.

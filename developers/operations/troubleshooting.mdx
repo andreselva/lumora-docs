@@ -120,9 +120,13 @@ Uma transação foi cancelada por conflito com outra, mesmo depois de 3 repetiç
 
 O authorizer exige o scope `aws.cognito.signin.user.admin`, presente no access token. Enviar o id token resulta em recusa.
 
+### 403 nas rotas do cliente
+
+As rotas `/public/*` não usam JWT. O gateway responde 403 sem invocar a função quando o header `x-access-token` está ausente, malformado ou desconhecido. Quando o link venceu, foi revogado ou substituído, ou o evento não está publicado, a `public-api` responde 403 `ACCESS_DENIED`. Veja [Acesso público do cliente](/developers/flows/public-client-access#erros).
+
 ### 404 em uma rota que existe no código
 
-Uma rota precisa estar em dois lugares: no `switch` de `studioApi.ts` e nos `Events` da função no template. Faltando no template, o API Gateway responde 404 sem invocar a Lambda. Faltando no `switch`, a Lambda responde 404 `Rota não encontrada`.
+Uma rota precisa estar em dois lugares: no `switch` do handler (`studioApi.ts` ou `publicApi.ts`) e nos `Events` da função no template. Faltando no template, o API Gateway responde 404 sem invocar a Lambda. Faltando no `switch`, a Lambda responde 404 `Rota não encontrada`.
 
 ### 404 em um recurso que existe
 
@@ -149,9 +153,15 @@ O reconciliador verifica exclusões vencidas periodicamente e reenfileira apenas
 
 Veja [Reconciliação da exclusão de eventos](/developers/flows/event-deletion-reconciliation).
 
-### A exclusão de fotos falha
+### Uma galeria fica em `DELETING`
 
-A tela chama `POST .../photos/delete`, rota que não existe na API. Com a API real, a chamada falha. Com o MSW ligado, um handler fictício responde com sucesso.
+A exclusão de fotos e de galerias roda em segundo plano, por uma fila. Enquanto o trabalho não termina, a galeria permanece em `DELETING`: não aceita novas fotos nem aparece para o cliente.
+
+1. Confira a `DeletePhotosGalleryQueueDLQ`. O alarme `DeletePhotosGalleryDlqAlarm` dispara com uma mensagem visível.
+2. Consulte os logs de `DeletePhotosGalleryFunction` por `Erro ao processar mensagem de exclusão`.
+3. Se a cadeia de mensagens se perdeu, repita a operação pela API. Ela recomeça do início da galeria e é segura.
+
+Só a exclusão de **evento** tem reconciliador. Para fotos e galerias, a recuperação é repetir a chamada ou reenfileirar a mensagem. Veja [Exclusão de fotos e galerias](/developers/flows/photo-and-gallery-deletion#falhas-e-recuperação).
 
 ## Desenvolvimento
 
@@ -165,11 +175,11 @@ O DynamoDB Local não está no ar, ou a tabela não foi criada. Execute `docker 
 
 ### Um teste de paridade de contrato falha
 
-As duas cópias de um contrato divergiram. Alinhe `packages/contracts/src` e `services/api/src/contracts`. Veja [Backend](/developers/architecture/backend#contratos).
+As duas cópias de um contrato divergiram. Alinhe `packages/contracts/src` e `services/api/src/contracts`. Os testes de paridade ficam em `tests/`. Veja [Backend](/developers/architecture/backend#contratos).
 
 ### O frontend mostra dados que não existem na API
 
-O MSW está ligado. Confira `VITE_ENABLE_MSW` e reinicie o Vite.
+O MSW está ligado. Ele responde por galerias, fotos e `/health`; as demais rotas vão para a API real. Confira `VITE_ENABLE_MSW` e reinicie o Vite.
 
 ### O `imageProcessor` falha ao carregar o sharp
 

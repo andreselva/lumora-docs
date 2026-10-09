@@ -20,14 +20,15 @@ O frontend é uma SPA em React 19 com TypeScript, construída com Vite. Fica em 
 ```
 apps/web/src
 ├── App.tsx            rotas de topo, carregadas sob demanda
-├── lib                cliente HTTP genérico e envio ao storage
+├── lib                cliente HTTP genérico, envio ao storage e formatação de valores
 ├── studio             área do fotógrafo (/app/*)
 │   ├── StudioRoutes   rotas dentro do Authenticator
 │   ├── api.ts         cliente HTTP autenticado
-│   ├── hooks          um hook por operação da API
-│   ├── pages          páginas
-│   ├── events         componentes de evento
-│   └── galleries      componentes de galeria e o UploadManager
+│   ├── account        perfil e bootstrap
+│   ├── events         eventos, pacote, link do cliente e resumo de upload
+│   ├── galleries      galerias, fotos, seleção e o UploadManager
+│   ├── orders         lista de pedidos
+│   └── home           página inicial
 ├── public             área do cliente (/g/:token/*): sessão, galerias, fotos, seleção e pedido
 ├── components         layout de página e componentes de UI
 └── mocks              handlers MSW, opcionais
@@ -45,7 +46,7 @@ apps/web/src
 | `/app` | `HomePage` | Mostra apenas o resultado de `GET /health`. |
 | `/app/eventos` | `EventsPage` | Lista paginada de eventos. |
 | `/app/eventos/novo` | `CreateEventPage` | Formulário de criação. |
-| `/app/eventos/:eventId` | `EventWorkspacePage` | Evento, galerias e fotos da galeria principal. |
+| `/app/eventos/:eventId` | `EventWorkspacePage` | Evento, pacote, link do cliente, galerias, fotos e seleção da galeria principal. |
 | `/app/eventos/:eventId/galerias/:galleryId` | `EventWorkspacePage` | O mesmo, com uma galeria específica selecionada. |
 | `/app/minha-conta` | `MyAccountPage` | Dados do perfil. |
 | `/app/pedidos` | `OrdersPage` | Lista paginada de pedidos, somente leitura. |
@@ -78,15 +79,13 @@ O cliente normaliza as falhas em uma única classe, `ApiError`, com `status` e `
 
 Validar a resposta no cliente faz com que uma mudança incompatível de contrato apareça como erro explícito, e não como `undefined` espalhado pela tela.
 
-<Note>
-  `lib/clients.ts` exporta `studioClient` e `galleryClient` com tokens de exemplo fixos. Nenhum outro módulo os importa. Parecem resquício de uma etapa anterior; o cliente em uso é `studio/api.ts`.
-</Note>
+A área do cliente tem seu próprio cliente, em `public/publicApi.ts`. Ele usa o mesmo `createApiClient`, mas envia o token do link no header `x-access-token` em vez do JWT. Veja [Acesso público do cliente](/developers/flows/public-client-access).
 
 ## Estado remoto
 
 Todo dado do servidor passa pelo TanStack Query. A configuração global, em `main.tsx`, usa `retry: 1` e desliga o refetch ao focar a janela.
 
-Cada operação tem um hook em `studio/hooks`, por exemplo `useEvents`, `useEvent`, `useEventGalleries` e `useGalleryPhotos`.
+Cada operação tem um hook ao lado da tela que a usa, por exemplo `useEvents` e `useEvent` em `studio/events`, e `useEventGalleries` e `useGalleryPhotos` em `studio/galleries`.
 
 ### O `sub` identifica as queries de dados do fotógrafo
 
@@ -150,7 +149,7 @@ Dois mecanismos de módulo observam todos os managers:
 - **`createEventUploadActivity`** soma a atividade das galerias de um evento. O resumo do servidor é por evento, então é nesse nível que a tela decide se continua consultando.
 
 <Note>
-  O `UploadManager` implementa `pause()` e `resume()`, e `useUploadPhotos` os expõe. Atualmente nenhum componente os chama: não há controle de pausa na tela.
+  O `UploadManager` implementa `pause()` e `resume()`. Nenhum componente os chama: não há controle de pausa na tela.
 </Note>
 
 ### A fila não é persistida
@@ -178,5 +177,5 @@ Esses schemas reduzidos aceitam `coverUrl` em galerias, e `useEvents` aceita `co
 O MSW só inicia em desenvolvimento e com `VITE_ENABLE_MSW=true`. Requisições sem handler seguem para a API real.
 
 <Warning>
-  Os handlers em `mocks/handlers/galleries.ts` foram escritos antes de a API expor galerias e fotos. Com o MSW ligado, eles interceptam essas rotas e respondem com dados fictícios, incluindo a rota de exclusão de fotos que a API não tem. Não use o MSW para validar o comportamento real desses fluxos.
+  Os handlers em `mocks/handlers/galleries.ts` foram escritos antes de a API expor galerias e fotos. Com o MSW ligado, eles interceptam as rotas de galerias e fotos do Studio, incluindo exclusão e reprocessamento, e respondem com dados fictícios. Eventos, seleção, pedidos e a área do cliente seguem para a API real. Não use o MSW para validar o comportamento real desses fluxos.
 </Warning>

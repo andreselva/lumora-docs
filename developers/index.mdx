@@ -16,7 +16,7 @@ O código-fonte fica no repositório `lumora`, um monorepo pnpm. Esta documenta�
 Quando esta documentação e o código divergirem, o código prevalece. Corrija a página.
 
 <Warning>
-  O `README.md` do repositório `lumora` descreve em parte a arquitetura pretendida, e não só a implementada. Ele cita, por exemplo, três buckets, CloudFront, marca d'água e capacidade provisionada, que não existem no código atual. Esta documentação descreve o estado implementado. As diferenças conhecidas estão em [Limitações e pontos futuros](/developers/limitations#divergências-entre-o-readme-e-o-código).
+  O `README.md` do repositório `lumora` descreve em parte a arquitetura pretendida, e não só a implementada. Ele cita, por exemplo, três buckets, um bucket `web` e capacidade provisionada, que não existem no código atual. Esta documentação descreve o estado implementado. As diferenças conhecidas estão em [Limitações e pontos futuros](/developers/limitations#divergências-entre-o-readme-e-o-código).
 </Warning>
 
 ## O que está implementado hoje
@@ -31,13 +31,17 @@ Quando esta documentação e o código divergirem, o código prevalece. Corrija 
 | Eventos: arquivar | Presente no domínio e no repositório; sem rota e sem tela |
 | Link do cliente por evento | Implementado: geração, substituição e estado no Studio |
 | Galerias: criar, listar, ler, renomear | Implementado |
-| Galerias: excluir | Implementado na API; sem tela |
+| Galerias: excluir | Implementado na API, com limpeza assíncrona das fotos; sem tela |
 | Upload de fotos direto para o S3 | Implementado |
-| Processamento assíncrono (thumbnail e preview) | Implementado |
+| Processamento assíncrono (thumbnail e preview com marca d'água) | Implementado |
+| Reprocessamento de fotos | Implementado: uma foto ou todas as falhas do evento |
+| Entrega de miniaturas e previews por CloudFront | Implementado |
 | Acompanhamento do processamento | Implementado, por polling |
-| Exclusão de fotos | Tela implementada; rota ausente na API |
+| Exclusão de fotos | Implementado: fotos escolhidas ou toda a galeria, com limpeza assíncrona |
 | Galeria do cliente (`/g/:token`) | Implementado: sessão, galerias e fotos, com authorizer próprio |
-| Seleção, pedidos, pagamento, entrega | Não implementado |
+| Seleção de fotos pelo cliente | Implementado, com limite do pacote e exportação para o fotógrafo |
+| Pedidos | Criação e cancelamento pelo cliente, lista para o fotógrafo |
+| Pagamento e entrega dos originais | Não implementado |
 
 ## Por onde começar
 
@@ -54,6 +58,9 @@ Quando esta documentação e o código divergirem, o código prevalece. Corrija 
   <Card title="Processamento de imagens" icon="gears" href="/developers/flows/image-processing">
     Fila, retry, lease e proteção contra workers atrasados.
   </Card>
+  <Card title="Acesso público do cliente" icon="link" href="/developers/flows/public-client-access">
+    Link, authorizer, sessão e fotos do cliente, sem conta.
+  </Card>
   <Card title="Decisões arquiteturais" icon="scale-balanced" href="/developers/adr/index">
     O que foi decidido e por quê.
   </Card>
@@ -66,14 +73,14 @@ Quando esta documentação e o código divergirem, o código prevalece. Corrija 
 
 | Caminho | Conteúdo |
 | --- | --- |
-| `apps/web` | Frontend React (Vite). Área do fotógrafo em `/app/*`. |
-| `services/api` | Código das três funções Lambda: handlers, casos de uso, domínio e repositórios. |
+| `apps/web` | Frontend React (Vite). Área do fotógrafo em `/app/*` e área do cliente em `/g/:token/*`. |
+| `services/api` | Código das sete funções Lambda: handlers, controllers, casos de uso, domínio e infraestrutura. |
 | `packages/contracts` | Schemas zod dos contratos HTTP, consumidos pelo frontend. |
-| `packages/domain` | `Money`, `OrderStatus`, `PhotoStatus` e geração de IDs. Hoje não é importado pelo backend nem pelo frontend. |
 | `infra/template.yaml` | Toda a infraestrutura AWS, em AWS SAM. |
 | `infra/layers/sharp` | Layer com o binário nativo do sharp para Lambda arm64. |
-| `scripts` | DynamoDB Local, criação de usuário de teste e testes de paridade e de infraestrutura. |
-| `docs` | Notas internas: design system, guia de integridade, revisões pontuais. |
+| `scripts` | DynamoDB Local, criação de usuário de teste e verificação da versão do Node. |
+| `tests` | Testes de paridade dos contratos e do cálculo de preço, e do template de infraestrutura. |
+| `docs` | Notas internas: design system, guias de engenharia, revisões e validações pontuais. |
 
 ## Convenções desta documentação
 
