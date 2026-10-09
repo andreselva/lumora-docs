@@ -7,7 +7,7 @@ A observabilidade do Lumora hoje se resume a **logs estruturados**, **cinco mét
 
 ## Logs
 
-As sete funções usam o Logger do AWS Lambda Powertools, que escreve uma linha JSON por registro no CloudWatch Logs.
+Seis das sete funções usam o Logger do AWS Lambda Powertools (a exceção é o `public-access-authorizer`), que escreve uma linha JSON por registro no CloudWatch Logs.
 
 | Função | `service` no log | Retenção |
 | --- | --- | --- |
