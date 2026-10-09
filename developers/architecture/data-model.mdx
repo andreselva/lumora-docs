@@ -112,7 +112,7 @@ Todas as listagens são `Query`. Não há `Scan` em nenhum repositório.
 
 ### Galeria
 
-`id`, `eventId`, `ownerId`, `name`, `isDefault`, `createdAt`, `updatedAt`.
+`id`, `eventId`, `ownerId`, `name`, `isDefault`, `createdAt`, `updatedAt`, mais `status` (`ACTIVE` ou `DELETING`; ausente equivale a `ACTIVE`) e, durante a exclusão, `deletingAttemptId` e `deletingLeaseUntil` (lease do worker, em milissegundos desde a época Unix).
 
 `isDefault` é `true` somente na galeria criada junto com o evento.
 
@@ -165,6 +165,8 @@ Veja [Seleção de fotos](/developers/flows/photo-selection).
 | `completedAttemptId` | Ao concluir | Nunca | Aponta para a pasta dos derivados publicados e torna a conclusão repetível. |
 
 `processingLeaseUntil` é um número comparado em expressões condicionais. Não é um atributo de TTL: o DynamoDB não remove nada quando ele vence.
+
+O lease de exclusão de fotos escolhidas usa um item à parte: `DELETE_SELECTED#{operationId}#{step}` na partição do evento, com `deletingOperationId`, `deletingAttemptId` e `deletingLeaseUntil`. Ele existe só enquanto um passo está em andamento e é apagado ao fim dele. Veja [Exclusão de fotos e galerias](/developers/flows/photo-and-gallery-deletion).
 
 O uso desses campos está em [Processamento de imagens](/developers/flows/image-processing).
 
