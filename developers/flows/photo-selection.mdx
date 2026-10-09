@@ -12,7 +12,7 @@ Deixar o cliente do link escolher as fotos que quer, em várias galerias do mesm
 - o total exibido seja o do **evento inteiro**, somando as galerias;
 - depois que o pedido é aberto, a seleção **pare de mudar**.
 
-A seleção é a entrada do pedido: o pedido nasce congelando exatamente a seleção do evento. O pedido é o assunto do fluxo de criação de pedidos. O acesso do cliente ao link está em [Acesso do cliente](/developers/flows/public-access).
+A seleção é a entrada do pedido: o pedido nasce congelando exatamente a seleção do evento. O pedido está descrito em [Criação de pedidos](/developers/flows/order-creation). O acesso do cliente ao link está em [Acesso do cliente](/developers/flows/public-access).
 
 ## O que é a seleção no banco
 
@@ -219,7 +219,7 @@ Enquanto o evento tem `activeOrderId`:
 - `select` e `deselect` falham na condição do evento e respondem 409 `SELECTION_LOCKED`.
 - `GET /public/selection` continua funcionando e devolve `orderId`, que o frontend usa para mostrar "Ver pedido" e desabilitar os botões.
 
-O `activeOrderId` é gravado na transação que abre o pedido e removido quando o pedido é cancelado ou descartado na montagem.
+O `activeOrderId` é gravado na transação que abre o pedido e removido quando o pedido é cancelado ou descartado na montagem. Veja [Criação de pedidos](/developers/flows/order-creation) e [Cancelamento e lista de pedidos](/developers/flows/order-cancellation-and-listing).
 
 A seleção congelada pode **perder fotos** (o fotógrafo as exclui), e isso muda a revisão. É essa propriedade que o pedido usa para detectar que a seleção mudou durante a montagem.
 
@@ -235,7 +235,7 @@ Passos, para cada lote de fotos:
 
 Se alguém selecionar ou desmarcar uma foto entre a leitura e a escrita, a condição do item da seleção falha, a transação é cancelada e a mensagem da fila volta. Na nova tentativa, a leitura reflete o estado atual. Sem a condição, uma seleção feita no meio ficaria órfã, contando para sempre.
 
-Essa exclusão **não exige** que não haja pedido ativo. O fotógrafo pode excluir uma foto selecionada mesmo com a seleção congelada. O efeito sobre o pedido é tratado no fluxo de criação de pedidos.
+Essa exclusão **não exige** que não haja pedido ativo. O fotógrafo pode excluir uma foto selecionada mesmo com a seleção congelada. O efeito sobre o pedido está em [Criação de pedidos](/developers/flows/order-creation#o-fotógrafo-exclui-fotos-selecionadas-durante-a-montagem).
 
 Na exclusão do evento inteiro, o item do evento já não existe: os itens da seleção são apagados e nenhum contador é atualizado.
 

@@ -76,6 +76,8 @@
               "developers/flows/event-package-and-access-link",
               "developers/flows/public-access",
               "developers/flows/photo-selection",
+              "developers/flows/order-creation",
+              "developers/flows/order-cancellation-and-listing",
               "developers/flows/event-deletion-reconciliation",
               "developers/flows/photo-upload",
               "developers/flows/image-processing"

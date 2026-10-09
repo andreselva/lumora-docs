@@ -82,7 +82,7 @@ A presença de `extraPhotoPriceCents` também define o **teto de seleção** do 
 | `null` | `includedPhotos`. O cliente não consegue passar disso. |
 | um valor | Sem teto. O que passar de `includedPhotos` é cobrado como adicional. |
 
-O teto é aplicado na [seleção de fotos](/developers/flows/photo-selection) do cliente, e a conta do valor é feita na criação do pedido.
+O teto é aplicado na [seleção de fotos](/developers/flows/photo-selection) do cliente, e a conta do valor é feita na [criação do pedido](/developers/flows/order-creation#o-cálculo-do-valor).
 
 ### Sequência
 
@@ -126,7 +126,7 @@ O DynamoDB serializa escritas condicionais no mesmo item. Então:
 - Se a mudança do pacote vence, a abertura do pedido encontra um pacote diferente, é recusada e relê o evento.
 - Se a abertura vence, `orderCount` passa a 1 e a mudança do pacote responde `EVENT_PACKAGE_LOCKED`.
 
-Não existe um pedido calculado sobre um pacote que já foi trocado.
+Não existe um pedido calculado sobre um pacote que já foi trocado. Veja [a abertura do pedido](/developers/flows/order-creation#passo-1-abrir-o-pedido).
 
 ### Mudar o pacote com uma seleção em andamento
 

@@ -87,7 +87,7 @@ Token **malformado** e **desconhecido** falham com o mesmo erro. O chamador não
 O contexto `{ pgId, eventId, tokenHash }` é a **única fonte** de dono e evento nas rotas públicas. Nenhuma rota aceita esses valores por path, query ou corpo. É a mesma regra do Studio, onde o dono vem só do `sub` do JWT.
 
 <Note>
-  O authorizer **não** compara o instante atual com `expiresAt` do registro do token, nem consulta o evento. Um link vencido ainda é reconhecido; quem o nega é a operação, ao ler o evento. Isso permite que operações específicas usem uma regra mais branda que "ver e selecionar". Por exemplo, ver um pedido já aberto exige apenas que o link seja o atual do evento, sem exigir que o prazo de seleção esteja valendo.
+  O authorizer **não** compara o instante atual com `expiresAt` do registro do token, nem consulta o evento. Um link vencido ainda é reconhecido; quem o nega é a operação, ao ler o evento. Isso permite que operações específicas usem uma regra mais branda que "ver e selecionar". Por exemplo, ver um pedido já aberto exige apenas que o link seja o atual do evento, sem exigir que o prazo de seleção esteja valendo. Veja [Criação de pedidos](/developers/flows/order-creation).
 </Note>
 
 ### O que o cache de 60 segundos significa
