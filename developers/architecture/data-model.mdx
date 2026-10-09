@@ -31,6 +31,7 @@ Há duas famílias de partição:
 | Galeria | `USER#{sub}#EVENT#{eventId}` | `GALLERY#{galleryId}` |
 | Foto | `USER#{sub}#EVENT#{eventId}` | `PHOTO#{galleryId}#{photoId}` |
 | Fingerprint | `USER#{sub}#EVENT#{eventId}` | `FP#{galleryId}#{sha256}` |
+| Token do link do cliente | `PUBLIC_TOKEN#{sha256}` | `PUBLIC_GALLERY` |
 
 ```mermaid
 erDiagram
@@ -103,7 +104,11 @@ Todas as listagens são `Query`. Não há `Scan` em nenhum repositório.
 | `galleryCount` | Número de galerias. Começa em 1, por causa da galeria principal. |
 | `registeredPhotoCount` | Número de fotos já registradas no evento. É mantido durante o registro e copiado para o tombstone como informação da exclusão. |
 | `photoCount` | Contador legado, gravado como 0. Não sai na API. Veja a seção sobre contadores. |
-| `orderCount` | Gravado como 0. Não há pedidos implementados. |
+| `orderCount` | Pedidos abertos no evento. Sobe com cada pedido e nunca desce; acima de zero, trava o pacote. |
+| `package` | Mapa com `priceCents`, `includedPhotos`, `extraPhotoPriceCents` e `billing`. Ausente até o fotógrafo definir o pacote. |
+| `accessTokenHash` | SHA-256 do token do link atual. Nunca sai na API. |
+| `accessLinkCreatedAt`, `accessLinkExpiresAt` | Criação e fim da validade do link atual, em milissegundos desde a época Unix |
+| `accessLinkRevokedAt` | Fim antecipado do link, em milissegundos. Lido pelas regras de acesso; hoje nenhum código o grava. |
 
 ### Galeria
 
@@ -128,6 +133,10 @@ Todas as listagens são `Query`. Não há `Scan` em nenhum repositório.
 
 Os quatro últimos atributos controlam a concorrência do processamento.
 
+### Token do link do cliente
+
+`id` (o `sub` do dono), `eventId`, `tokenHash`, `createdAt`, `updatedAt` e `expiresAt`. A chave é o hash do token, o que permite resolver dono e evento a partir do token apresentado pelo cliente, sem JWT. Existe no máximo um por evento: gerar um novo link apaga o anterior na mesma transação. Veja [Pacote, publicação e link do cliente](/developers/flows/event-publishing-and-access-link).
+
 ### Fingerprint
 
 `photoId` e `ownerId`. O item existe só para garantir unicidade: a sua chave contém o hash, e o seu conteúdo aponta para a foto já registrada.
@@ -147,7 +156,7 @@ O uso desses campos está em [Processamento de imagens](/developers/flows/image-
 
 ## Escritas transacionais
 
-Cinco operações gravam mais de um item e usam `TransactWriteItems`:
+As operações abaixo gravam mais de um item e usam `TransactWriteItems`:
 
 | Operação | Itens envolvidos | Invariante protegida |
 | --- | --- | --- |
@@ -156,6 +165,7 @@ Cinco operações gravam mais de um item e usam `TransactWriteItems`:
 | Excluir galeria | galeria e `galleryCount` do evento | A galeria principal não é excluída. |
 | Registrar foto | fingerprint, foto, `registeredPhotoCount` do evento e verificação da galeria | Um arquivo é registrado uma vez por galeria, e só em galeria existente. |
 | Excluir evento | evento ativo e tombstone `EVENT_DELETION` | A remoção visível do evento e o registro da limpeza pendente acontecem atomicamente. |
+| Gerar link do cliente | evento, token novo e token anterior | O evento tem um único link válido, e só com pacote definido. |
 
 As transições do processamento, ao contrário, usam um único `UpdateItem` condicional sobre a foto, sem transação e sem tocar no evento.
 
