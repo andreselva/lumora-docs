@@ -1,6 +1,6 @@
 ---
 title: "Frontend"
-description: "Estrutura da SPA React, autenticação, comunicação com a API, estado remoto e o gerenciador de uploads."
+description: "Estrutura da SPA React, as duas áreas (Studio e cliente), autenticação, comunicação com a API, estado remoto e o gerenciador de uploads."
 ---
 
 O frontend é uma SPA em React 19 com TypeScript, construída com Vite. Fica em `apps/web`.
@@ -10,7 +10,8 @@ O frontend é uma SPA em React 19 com TypeScript, construída com Vite. Fica em 
 | Build e dev server | Vite |
 | Rotas | React Router (`BrowserRouter`) |
 | Estado remoto | TanStack Query |
-| Autenticação | AWS Amplify (`aws-amplify`, `@aws-amplify/ui-react`) |
+| Listas longas | TanStack Virtual (grade virtualizada da área do cliente) |
+| Autenticação do fotógrafo | AWS Amplify (`aws-amplify`, `@aws-amplify/ui-react`) |
 | Validação de contratos | zod, via `@photos/contracts` |
 | UI | Tailwind CSS 4, componentes no estilo shadcn sobre Radix |
 | Testes | Vitest, Testing Library, MSW |
@@ -20,23 +21,29 @@ O frontend é uma SPA em React 19 com TypeScript, construída com Vite. Fica em 
 ```
 apps/web/src
 ├── App.tsx            rotas de topo, carregadas sob demanda
-├── lib                cliente HTTP genérico e envio ao storage
+├── main.tsx           QueryClient, rotas e o Toaster
+├── lib                cliente HTTP genérico, envio ao storage, formatação de valores
+├── components         layout de página (Page), grade de fotos e componentes de UI
 ├── studio             área do fotógrafo (/app/*)
 │   ├── StudioRoutes   rotas dentro do Authenticator
+│   ├── StudioLayout   barra lateral e saída
 │   ├── api.ts         cliente HTTP autenticado
-│   ├── hooks          um hook por operação da API
-│   ├── pages          páginas
-│   ├── events         componentes de evento
-│   └── galleries      componentes de galeria e o UploadManager
-├── gallery            área do cliente (/g/:token/*), ainda sem conteúdo
-├── components         layout de página e componentes de UI
-└── mocks              handlers MSW, opcionais
+│   ├── account        perfil
+│   ├── events         componentes e hooks de evento, pacote, link e resumo de envio
+│   ├── galleries      galeria, fotos, seleção e o UploadManager
+│   ├── orders         lista de pedidos
+│   └── home           página inicial
+├── public             área do cliente (/g/:token/*)
+├── mocks              handlers MSW, opcionais
+└── test               apoio aos testes
 ```
 
 `App.tsx` declara duas áreas, cada uma carregada com `lazy`:
 
 - `/app/*`: o Lumora Studio, área do fotógrafo. A raiz `/` redireciona para `/app`.
-- `/g/:token/*`: a galeria do cliente. Atualmente existe apenas o layout e o contexto que guarda o token; não há páginas nem chamadas à API.
+- `/g/:token/*`: a área do cliente, aberta pelo link.
+
+As duas **não compartilham sessão, cliente de API nem cache**. Veja [Duas áreas, dois clientes](#duas-áreas-dois-clientes).
 
 ### Rotas do Studio
 
@@ -45,14 +52,45 @@ apps/web/src
 | `/app` | `HomePage` | Mostra apenas o resultado de `GET /health`. |
 | `/app/eventos` | `EventsPage` | Lista paginada de eventos. |
 | `/app/eventos/novo` | `CreateEventPage` | Formulário de criação. |
-| `/app/eventos/:eventId` | `EventWorkspacePage` | Evento, galerias e fotos da galeria principal. |
+| `/app/eventos/:eventId` | `EventWorkspacePage` | Evento, pacote, link, resumo de envio, galerias e fotos da galeria selecionada. |
 | `/app/eventos/:eventId/galerias/:galleryId` | `EventWorkspacePage` | O mesmo, com uma galeria específica selecionada. |
+| `/app/pedidos` | `OrdersPage` | Lista paginada de pedidos, somente leitura. |
 | `/app/minha-conta` | `MyAccountPage` | Dados do perfil. |
-| `/app/pedidos/*`, `/app/configuracoes/*` | nenhuma | Rotas declaradas sem elemento. |
+| `/app/configuracoes/*` | nenhuma | Rota declarada sem elemento. |
 
-## Autenticação
+A página do evento reúne, nesta ordem: dados do evento, pacote, link do cliente, resumo de envio e galerias. A galeria selecionada tem duas abas, **Fotos** e **Seleção**.
 
-O Studio inteiro fica dentro do componente `Authenticator` do Amplify UI, em `studio/StudioRoutes.tsx`. Sem sessão, o `Authenticator` renderiza as telas de entrada e cadastro no lugar das rotas.
+### Rotas da área do cliente
+
+| Rota | Página | Conteúdo |
+| --- | --- | --- |
+| `/g/:token` | `PublicHomePage` | Evento, data, validade do link e a lista de galerias. |
+| `/g/:token/galerias/:galleryId` | `GalleryPhotosPage` | Grade virtualizada, lightbox, seleção, contador e revisão do pedido. |
+
+## Duas áreas, dois clientes
+
+| | Studio | Cliente |
+| --- | --- | --- |
+| Credencial | JWT do Cognito, obtido a cada requisição | Token do link, em `x-access-token` |
+| Onde a credencial vive | Sessão do Amplify | **Só na memória** do cliente de API; nunca em `localStorage`, `sessionStorage` ou cookie |
+| Cliente de API | `studioApi` | `createPublicApi(token)`, dentro de `PublicApiContext` |
+| `QueryClient` | O global, de `main.tsx` | Um por token, criado em `PublicLayout`; trocar de link descarta o cache |
+| Chaves de cache | `['studio', recurso, sub, ...]` | `['public', ...]` |
+| Amplify | Sim | **Não**: o build falha se entrar |
+
+### Guarda de bundle da área do cliente
+
+`apps/web/config/publicChunkGuard.ts` é um plugin do Vite que verifica o bundle de produção:
+
+- **Amplify proibido.** Nenhum módulo do Amplify pode estar nos chunks que a área do cliente baixa. A autenticação é só do Studio. Um import compartilhado que arraste o Amplify para o chunk de entrada ou para um chunk comum **quebra o `vite build`**.
+- **Orçamento.** O JavaScript e o CSS do carregamento inicial da área do cliente têm um teto de 200 KB e 20 KB, medidos em gzip. Passar do teto também quebra o build. O comentário no arquivo registra que a medição de 2026-10-08 foi de 162 KB de JavaScript e 14 KB de CSS.
+- **Carga sob demanda obrigatória.** A área do cliente precisa continuar carregada por `import()` dinâmico em `App.tsx`. Se o chunk não for encontrado, o build também falha.
+
+Subir o teto é uma decisão. O comentário orienta a conferir no treemap (`pnpm --filter @photos/web analyze`) o que cresceu antes de mudar os números.
+
+## Autenticação do Studio
+
+O Studio inteiro fica dentro do componente `Authenticator` do Amplify UI, em `studio/StudioRoutes.tsx`. Sem sessão, o `Authenticator` renderiza as telas de entrada e cadastro no lugar das rotas. O cadastro pede o nome.
 
 `studio/amplify.ts` configura o Amplify com o User Pool e o client, lidos de variáveis de ambiente. A configuração só acontece quando as duas variáveis estão preenchidas.
 
@@ -62,8 +100,8 @@ O fluxo completo, incluindo a validação no API Gateway, está em [Autenticaç�
 
 Há duas camadas:
 
-1. `lib/apiClient.ts` expõe `createApiClient`, um cliente genérico sobre `fetch`. Cada chamada recebe um schema zod e devolve dados já validados.
-2. `studio/api.ts` cria a instância `studioApi`, que obtém o access token com `fetchAuthSession()` a cada requisição e o envia em `Authorization: Bearer`.
+1. `lib/apiClient.ts` expõe `createApiClient`, um cliente genérico sobre `fetch`. Cada chamada recebe um schema zod e devolve dados já validados. O cliente aceita uma função `getHeaders`, que cada área preenche com a sua credencial.
+2. `studio/api.ts` cria a instância `studioApi`, que obtém o access token com `fetchAuthSession()` a cada requisição e o envia em `Authorization: Bearer`. `public/publicApi.ts` cria o cliente da área do cliente, com o `x-access-token`.
 
 O cliente normaliza as falhas em uma única classe, `ApiError`, com `status` e `code`:
 
@@ -77,25 +115,21 @@ O cliente normaliza as falhas em uma única classe, `ApiError`, com `status` e `
 
 Validar a resposta no cliente faz com que uma mudança incompatível de contrato apareça como erro explícito, e não como `undefined` espalhado pela tela.
 
-<Note>
-  `lib/clients.ts` exporta `studioClient` e `galleryClient` com tokens de exemplo fixos. Nenhum outro módulo os importa. Parecem resquício de uma etapa anterior; o cliente em uso é `studio/api.ts`.
-</Note>
-
 ## Estado remoto
 
-Todo dado do servidor passa pelo TanStack Query. A configuração global, em `main.tsx`, usa `retry: 1` e desliga o refetch ao focar a janela.
+Todo dado do servidor passa pelo TanStack Query. A configuração global, em `main.tsx`, usa `retry: 1` e desliga o refetch ao focar a janela. A área do cliente usa a mesma configuração no `QueryClient` próprio.
 
-Cada operação tem um hook em `studio/hooks`, por exemplo `useEvents`, `useEvent`, `useEventGalleries` e `useGalleryPhotos`.
+Cada operação tem um hook ao lado do componente que a usa, por exemplo `useEvents` e `useCreateAccessLink` em `studio/events`, e `useGalleryPhotos` em `studio/galleries`.
 
 ### O `sub` identifica as queries de dados do fotógrafo
 
 As chaves de dados do fotógrafo seguem o formato `['studio', recurso, sub, ...ids]`. Incluir o `sub` do usuário impede que dados em cache de uma sessão apareçam em outra, no mesmo navegador. A consulta de saúde usa `['health']`, sem `sub`, porque não retorna dados do fotógrafo.
 
-O logout, em `StudioLayout`, reforça isso em três passos:
+O logout, em `StudioLayout`, reforça isso:
 
 1. cancela as queries em andamento com prefixo `studio`;
 2. chama `signOut()`;
-3. limpa o cache e descarta os gerenciadores de upload.
+3. limpa o cache, descarta os gerenciadores de upload e reinicia os acompanhamentos de reprocessamento.
 
 `useMe` e `useBootstrapMe` conferem ainda se o `id` devolvido pela API é igual ao `sub` da sessão ativa antes de aceitar o resultado. O teste `session-race.review.test.tsx` cobre trocas de sessão durante requisições.
 
@@ -103,16 +137,33 @@ O logout, em `StudioLayout`, reforça isso em três passos:
 
 As mutations atualizam o cache de duas formas, conforme o caso:
 
-- **`setQueryData`** quando a resposta já traz o recurso atualizado, como ao criar ou editar um evento;
+- **`setQueryData`** quando a resposta já traz o recurso atualizado, como ao criar ou editar um evento, ou salvar o pacote;
 - **`invalidateQueries`** para listas paginadas, cuja ordem é decidida pelo servidor.
 
 ### Listas paginadas
 
-`useEvents` e `useGalleryPhotos` usam `useInfiniteQuery`. A API devolve `nextCursor`, um valor opaco que o cliente apenas reenvia.
+`useEvents`, `useGalleryPhotos`, `useOrders` e a listagem de fotos do cliente usam `useInfiniteQuery`. A API devolve `nextCursor`, um valor opaco que o cliente apenas reenvia.
+
+## Área do cliente
+
+A área do cliente é a parte mais sensível ao desempenho, porque é aberta em celular, por link.
+
+| Peça | Papel |
+| --- | --- |
+| `PublicLayout` | Valida o formato do token, cria o cliente de API e o `QueryClient` do link e protege todas as páginas com `PublicSessionGate`. |
+| `usePublicSession` | Lê a sessão e agenda uma nova leitura no vencimento do link. |
+| `VirtualPhotosGrid` | Monta só as linhas perto da tela. A primeira página tem 60 fotos; as seguintes, 200. |
+| `PhotoLightbox` | Mostra uma preview por vez e pré-carrega a anterior e a próxima. |
+| `SelectionToggle` e `SelectionCounter` | Marcam fotos e mostram o contador e a prévia do valor. |
+| `OrderReview` | Revisa e finaliza o pedido. |
+
+Os detalhes de cada fluxo estão em [Acesso do cliente](/developers/flows/public-access), [Seleção de fotos](/developers/flows/photo-selection) e [Criação de pedidos](/developers/flows/order-creation).
+
+O valor mostrado ao cliente (`selectionPrice`) é uma **prévia**, calculada no navegador com a mesma conta do backend. Um teste de paridade impede que as duas divirjam. O valor do pedido é sempre o do servidor.
 
 ## Upload de arquivos
 
-O upload é a parte mais elaborada do frontend. A lógica fica fora do React, na classe `UploadManager`, em `studio/galleries/uploadManager.ts`.
+O upload é a parte mais elaborada do Studio. A lógica fica fora do React, na classe `UploadManager`, em `studio/galleries/uploadManager.ts`.
 
 ### Por que fora do React
 
@@ -143,10 +194,11 @@ O fluxo ponta a ponta, com a parte do servidor, está em [Upload de fotos](/deve
 
 ### Estado global derivado dos managers
 
-Dois mecanismos de módulo observam todos os managers:
+Mecanismos de módulo observam todos os managers:
 
 - **`createUnloadGuard`** registra um listener de `beforeunload` enquanto algum manager tiver trabalho, para o navegador pedir confirmação antes de fechar a aba.
 - **`createEventUploadActivity`** soma a atividade das galerias de um evento. O resumo do servidor é por evento, então é nesse nível que a tela decide se continua consultando.
+- **`reprocessWatch`** acompanha os pedidos de reprocessamento de um evento, porque a foto não muda de estado quando o pedido é aceito. Veja [Reprocessamento de fotos](/developers/flows/photo-reprocessing).
 
 <Note>
   O `UploadManager` implementa `pause()` e `resume()`, e `useUploadPhotos` os expõe. Atualmente nenhum componente os chama: não há controle de pausa na tela.
@@ -166,16 +218,20 @@ A fila vive só na memória da aba. Fechar ou recarregar a página a descarta. A
 
 Enquanto houver rascunho, a página intercepta os próprios links e registra `beforeunload`. A barra lateral e o botão voltar do navegador não são interceptados, porque o app usa `BrowserRouter` sem `useBlocker`.
 
+Publicar o evento exige que não haja rascunho pendente, porque publicar libera o que está salvo, e não o rascunho local.
+
 ## Contratos
 
-O frontend importa os schemas de `@photos/contracts`. Há uma exceção: `studio/galleries/contracts.ts` define schemas reduzidos de galeria e de foto, marcados no próprio arquivo como temporários.
+O frontend importa os schemas de `@photos/contracts` (`packages/contracts`). Há uma exceção: `studio/galleries/contracts.ts` define schemas reduzidos de galeria e de foto, marcados no próprio arquivo como temporários.
 
 Esses schemas reduzidos aceitam `coverUrl` em galerias, e `useEvents` aceita `coverUrl` em eventos. A API atual não devolve esses campos, e os cartões mostram um ícone no lugar da capa.
 
 ## Mocks
 
-O MSW só inicia em desenvolvimento e com `VITE_ENABLE_MSW=true`. Requisições sem handler seguem para a API real.
+O MSW só inicia em desenvolvimento e com `VITE_ENABLE_MSW=true`. Requisições sem handler seguem para a API real. Os handlers cobrem a saúde, galerias e fotos do Studio.
 
 <Warning>
-  Os handlers em `mocks/handlers/galleries.ts` foram escritos antes de a API expor galerias e fotos. Com o MSW ligado, eles interceptam essas rotas e respondem com dados fictícios, incluindo a rota de exclusão de fotos que a API não tem. Não use o MSW para validar o comportamento real desses fluxos.
+  Os handlers em `mocks/handlers/galleries.ts` foram escritos antes de a API expor galerias e fotos, e o comentário do arquivo ainda diz que a API não as expõe. Com o MSW ligado, eles interceptam essas rotas e respondem com dados fictícios, incluindo estados de exclusão e reprocessamento simulados. Não use o MSW para validar o comportamento real desses fluxos. Não há mocks para eventos, pacote, link, seleção nem pedidos.
 </Warning>
+
+Para medir a área do cliente sem AWS, `scripts/public-mock-api.mjs` sobe uma API simulada de `/public/session` e `/public/photos` com miniaturas e previews gerados pelo sharp. Ela foi usada para a medição de desempenho registrada em `docs/validation` no repositório `lumora`.
