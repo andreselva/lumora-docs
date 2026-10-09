@@ -28,7 +28,9 @@
           {
             "group": "Eventos",
             "pages": [
-              "user/events/manage-events"
+              "user/events/manage-events",
+              "user/events/share-with-client",
+              "user/events/client-selection"
             ]
           },
           {
@@ -43,6 +45,12 @@
               "user/photos/upload-photos",
               "user/photos/track-processing",
               "user/photos/upload-problems"
+            ]
+          },
+          {
+            "group": "Pedidos",
+            "pages": [
+              "user/orders/view-orders"
             ]
           }
         ]
