@@ -73,9 +73,15 @@
               "developers/flows/authentication",
               "developers/flows/account-bootstrap",
               "developers/flows/events-and-galleries",
+              "developers/flows/event-publishing-and-access-link",
               "developers/flows/event-deletion-reconciliation",
               "developers/flows/photo-upload",
-              "developers/flows/image-processing"
+              "developers/flows/image-processing",
+              "developers/flows/reprocessing-and-media",
+              "developers/flows/photo-and-gallery-deletion",
+              "developers/flows/public-client-access",
+              "developers/flows/photo-selection",
+              "developers/flows/orders"
             ]
           },
           {

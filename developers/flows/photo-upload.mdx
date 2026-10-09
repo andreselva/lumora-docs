@@ -178,7 +178,7 @@ O lote não é atômico. A API processa os arquivos em sequência, e uma falha n
 
 - **Igualdade de conteúdo.** Dois arquivos diferentes com mesmo nome, tamanho e data de modificação são tratados como o mesmo.
 - **Envio único por ticket.** O presigned POST pode ser usado mais de uma vez dentro da validade. Cada uso cria uma nova versão do objeto. O processamento lida com isso fixando a primeira versão. Veja [Processamento de imagens](/developers/flows/image-processing#versão-do-original).
-- **Reenvio de foto com falha.** Uma foto em `FAILED` recebe `upload: null`. Selecionar o mesmo arquivo de novo não a reprocessa.
+- **Reenvio de foto com falha.** Uma foto em `FAILED` recebe `upload: null`. Selecionar o mesmo arquivo de novo não a reprocessa; o reprocessamento é um pedido à parte. Veja [Reprocessamento e mídia](/developers/flows/reprocessing-and-media#reprocessamento).
 
 ## Acompanhamento pelo frontend
 
@@ -212,12 +212,12 @@ Quando a contagem de `AVAILABLE` muda, o hook invalida as listas de fotos do eve
 
 ### Listagem e miniaturas
 
-`GET /events/{eventId}/galleries/{galleryId}/photos` devolve 24 fotos por página, em ordem crescente de ULID. Para cada foto, a API gera uma URL assinada de leitura da miniatura, válida por 10 minutos.
+`GET /events/{eventId}/galleries/{galleryId}/photos` devolve 24 fotos por página, em ordem crescente de ULID. Para cada foto, a API devolve a URL pública da miniatura e da preview, na distribuição de mídia.
 
 A chave da miniatura depende de `completedAttemptId`, a tentativa que concluiu o processamento.
 
 <Note>
-  Atualmente a URL de miniatura é gerada para toda foto, sem verificar o estado nem a existência do derivado. Quando o objeto não existe, o S3 recusa o acesso. Uma foto em `FAILED` pode ter miniatura se a geração da preview falhou depois de a miniatura ser gravada. Veja [Limitações](/developers/limitations#limitações-atuais).
+  Atualmente as URLs são montadas para toda foto, sem verificar o estado nem a existência do derivado. Quando o objeto não existe, a distribuição responde com erro. Uma foto em `FAILED` pode ter miniatura se a geração da preview falhou depois de a miniatura ser gravada. Veja [Limitações](/developers/limitations#limitações-atuais).
 </Note>
 
 ## Onde olhar no código
@@ -229,6 +229,6 @@ A chave da miniatura depende de `completedAttemptId`, a tentativa que concluiu o
 | Envio ao S3 | `apps/web/src/lib/storageClient.ts` |
 | Polling do resumo | `apps/web/src/studio/hooks/useEventUploadSummary.ts` |
 | Caso de uso de registro | `services/api/src/application/photos/RequestPhotoUploads.ts` |
-| Transação de registro | `services/api/src/repositories/dynamodb/DynamoDbPhotoRepository.ts` |
-| Assinatura do POST | `services/api/src/repositories/s3/S3PhotoStorage.ts` |
+| Transação de registro | `services/api/src/infra/dynamodb/DynamoDbPhotoRepository.ts` |
+| Assinatura do POST | `services/api/src/infra/s3/S3PhotoStorage.ts` |
 | Chaves do S3 | `services/api/src/shared/storage/S3KeyBuilder.ts` |
