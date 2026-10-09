@@ -20,7 +20,7 @@ Os itens estão em quatro grupos:
 | --- | --- |
 | Exclusão de fotos | A tela marca fotos e chama `POST .../photos/delete`. A rota não existe na API nem no template. `IPhotoStorage.deletePhoto` existe, mas a implementação no S3 é vazia. |
 | Exclusão de galeria | A API implementa. Não há controle na tela. |
-| Publicar e arquivar evento | Implementado na entidade e no repositório. Sem caso de uso, rota ou tela. Todo evento permanece em `DRAFT`. |
+| Arquivar evento | Implementado na entidade e no repositório. Sem caso de uso, rota ou tela. Nenhum evento chega a `ARCHIVED`. |
 | Pausar e retomar o envio | Implementado no `UploadManager` e exposto pelo hook. Nenhum componente chama. |
 | Páginas **Pedidos** e **Configurações** | Itens de menu e rotas sem conteúdo. |
 | Página inicial do Studio | Mostra apenas o resultado de `GET /health`. |
@@ -45,7 +45,9 @@ Os itens estão em quatro grupos:
 | Item | Situação |
 | --- | --- |
 | Exclusão de galeria sem cascata | A API exclui a galeria sem verificar nem remover suas fotos e fingerprints. |
-| `expiresAt` sem efeito | O valor é armazenado e editável. Nenhum código o usa. |
+| `expiresAt` sem efeito | O valor é armazenado e editável. Nenhum código o usa. O acesso do cliente segue o prazo do link, não este campo. |
+| Revogação do link sem escritor | `accessLinkRevokedAt` e `revokedAt` são lidos pelas regras de acesso, mas nenhum código os grava. |
+| Registros de token sem expiração física | Sem TTL na tabela, o registro `PUBLIC_TOKEN#` de um link vencido permanece até a substituição do link ou a exclusão do evento. |
 | Edição sem controle de versão | Edições simultâneas de evento ou galeria seguem "a última escrita vence". |
 | Capas | `coverUrl` é aceito pelos schemas do frontend, mas a API não o devolve. |
 | Perfil sem edição | Não há rota para alterar nome ou e-mail. |
@@ -71,6 +73,7 @@ Veja o [ADR-009](/developers/adr/009-derived-photo-counters).
 | Alarme sem assinante | O tópico SNS não tem assinatura no template. |
 | Observabilidade mínima | Sem métricas próprias, tracing, dashboard ou alarmes de erro. |
 | CORS da API aberto | Aceita qualquer origem. |
+| `PUBLIC_APP_URL` fixo | O template define `http://localhost:5173`. O link do cliente devolvido pela API aponta para esse endereço. |
 | Miniaturas sem CDN | Servidas por URL assinada do S3, válida por 10 minutos. |
 
 ### Dívidas técnicas registradas no repositório
@@ -138,7 +141,7 @@ O roadmap do `README.md` do repositório `lumora` descreve as fases abaixo. Nenh
 | --- | --- |
 | Marca d'água na preview | Não implementado. A preview é gerada sem marca. |
 | Entrega de mídia por CDN | Não implementado. |
-| Link temporário de galeria para o cliente | Apenas a rota e o contexto no frontend, e o header liberado no CORS da API. |
+| Link temporário de galeria para o cliente | Geração implementada. Veja [Pacote, publicação e link do cliente](/developers/flows/event-publishing-and-access-link). |
 | Seleção de fotos pelo cliente | Não implementado. |
 | Pedidos e preços | Apenas `Money` e `OrderStatus` em `packages/domain`, sem uso. |
 | Pagamento, webhook e reconciliação | Não implementado. |
