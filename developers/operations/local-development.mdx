@@ -3,7 +3,7 @@ title: "Desenvolvimento local"
 description: "Prepare o ambiente, rode o frontend e os testes e entenda o que só pode ser validado na stack real."
 ---
 
-O Lumora não tem um ambiente totalmente local. O frontend e os testes rodam na sua máquina. Cognito, S3, SQS e a integração entre eles só existem em uma stack de desenvolvimento na AWS.
+O Lumora não tem um ambiente totalmente local. O frontend e os testes rodam na sua máquina. Cognito, S3, SQS, CloudFront e a integração entre eles só existem em uma stack de desenvolvimento na AWS.
 
 ## Pré-requisitos
 
@@ -25,7 +25,7 @@ pnpm install
 `services/api` tem também um `package-lock.json` do npm. Ele existe porque o build das Lambdas, feito pelo SAM, instala as dependências com `npm ci` dentro dessa pasta, fora do workspace do pnpm.
 
 <Warning>
-  Ao alterar dependências de `services/api`, atualize os dois lockfiles: o do pnpm, na raiz, e o `package-lock.json` da pasta. O CI executa `npm ci --dry-run` para detectar divergência.
+  Ao alterar dependências de `services/api`, atualize os dois lockfiles: o do pnpm, na raiz, e o `package-lock.json` da pasta. O CI não compara os dois; o `sam build` usa o do npm, então uma divergência só aparece na hora de construir as Lambdas.
 </Warning>
 
 ## Frontend
@@ -51,7 +51,9 @@ O Amplify só é configurado quando as duas variáveis do Cognito estão preench
 pnpm --filter @photos/web dev
 ```
 
-O Vite sobe em `http://localhost:5173`. Essa é a origem padrão aceita pelo CORS do bucket de fotos, definida pelo parâmetro `WebOrigin` do template. Se você servir o frontend em outra origem, o upload ao S3 falha por CORS.
+O Vite sobe em `http://localhost:5173`, escutando em todas as interfaces, e aceita requisições vindas de domínios `trycloudflare.com` (túnel de desenvolvimento). Essa é a origem padrão aceita pelo CORS do bucket de originais, definida pelo parâmetro `WebOrigin` do template. Se você servir o frontend em outra origem, o upload ao S3 falha por CORS.
+
+A área do fotógrafo fica em `/app`. A área do cliente fica em `/g/{token}`.
 
 ### Mocks
 
@@ -62,8 +64,24 @@ VITE_ENABLE_MSW=true pnpm --filter @photos/web dev
 O MSW só inicia em modo de desenvolvimento e com essa variável igual a `true`. Reinicie o Vite e recarregue a página ao mudar o valor.
 
 <Warning>
-  Com o MSW ligado, as rotas de galerias e fotos são respondidas por dados fictícios, e não pela API. Os handlers são anteriores à implementação dessas rotas no backend. Use o MSW apenas para trabalho de interface.
+  Com o MSW ligado, as rotas de galerias e fotos do Studio são respondidas por dados fictícios, e não pela API. Os handlers são anteriores à implementação dessas rotas no backend. Eventos, pacote, link, seleção e pedidos não têm mock: essas requisições seguem para a API real. Use o MSW apenas para trabalho de interface.
 </Warning>
+
+### Área do cliente na sua máquina
+
+Para abrir a área do cliente contra a stack real, o evento precisa estar **publicado** e ter **pacote** e **link**:
+
+1. no Studio, defina o pacote do evento, publique-o e gere o link do cliente;
+2. o link tem o formato `{PUBLIC_APP_URL}/g/{token}`. No template atual, `PUBLIC_APP_URL` é `http://localhost:5173`, então o link gerado já abre no Vite local;
+3. o link aparece **uma única vez**. Se perdê-lo, gere outro.
+
+Para medir ou desenvolver a área do cliente **sem AWS**, há uma API simulada:
+
+```bash
+node scripts/public-mock-api.mjs
+```
+
+Ela sobe em `http://localhost:4176` com 5.000 fotos, responde a `GET /public/session` e a `GET /public/photos` e serve miniaturas e previews gerados com o sharp. Aceita qualquer token com o formato do link. Opções: `PORT`, `TOTAL`, `API_MS`, `MEDIA_MS` e `SVG_FALLBACK=1` (imagens SVG leves, só para desenvolver a tela, não para medir). Aponte `VITE_API_URL` para ela. A seleção e os pedidos não existem nessa API simulada.
 
 ## Backend
 
@@ -87,7 +105,7 @@ pnpm test
 Executa dois projetos do Vitest:
 
 - o do frontend, com jsdom e Testing Library;
-- o de Node, com os testes de `packages`, `services` e `scripts`.
+- o de Node, com os testes de `packages`, `services`, `scripts` e `tests`. A pasta `tests` reúne os testes de paridade de contratos, de paridade do cálculo de preço e do template SAM.
 
 Esses testes não precisam de Docker nem de credenciais AWS.
 
@@ -109,7 +127,9 @@ Como a tabela local é criada a partir do template, as chaves e o índice são o
 
 O banco roda em memória. Reiniciar o contêiner apaga os dados, e é preciso executar `pnpm dynamodb:setup` de novo.
 
-Esses testes cobrem o que os repositórios falsos não cobrem: expressões condicionais, transações, concorrência e isolamento entre fotógrafos.
+Esses testes cobrem o que os repositórios falsos não cobrem: expressões condicionais, transações, concorrência e isolamento entre fotógrafos. É aqui que ficam, por exemplo, os testes da seleção, do fluxo de pedidos, da lista de pedidos e da exclusão de eventos.
+
+Os arquivos de integração compartilham uma tabela e **não rodam em paralelo**. O reconciliador de exclusões varre o índice inteiro, e em paralelo ele processaria tombstones criados por outros arquivos.
 
 ### Qualidade
 
@@ -120,6 +140,16 @@ pnpm typecheck
 ```
 
 O CI executa esses três comandos, os dois conjuntos de testes e o build do frontend. Veja `.github/workflows/ci.yml`.
+
+O build do frontend também verifica a área do cliente. Ele **falha** se o carregamento inicial dela incluir módulos do Amplify ou passar do orçamento de tamanho. Veja [Frontend](/developers/architecture/frontend#guarda-de-bundle-da-área-do-cliente).
+
+Para ver de onde vem o peso do bundle:
+
+```bash
+pnpm --filter @photos/web analyze
+```
+
+Gera um treemap em `apps/web/bundle-stats.html`, mesmo quando a verificação falha.
 
 ## Usuário de teste
 
@@ -147,20 +177,36 @@ O perfil AWS em uso precisa da permissão `cognito-idp:AdminConfirmSignUp` no po
 
 Use um e-mail novo a cada execução: o script não sobrescreve usuários existentes. Execute `pnpm create:test-user --help` para os detalhes.
 
+## Processar uma imagem sem AWS
+
+Dois comandos rodam o mesmo núcleo de processamento do Lambda, sem fila, S3 nem DynamoDB:
+
+```bash
+pnpm process:image <foto.jpg> [--watermark <marca.png>] [--out <diretório>]
+pnpm process:local <entrada> <saída> [--watermark <marca.png> | --no-watermark]
+```
+
+O primeiro gera a miniatura e a preview de uma foto. O segundo percorre uma pasta (sem subpastas), grava `<arquivo>.thumb.webp` e `<arquivo>.preview.webp` para cada imagem e um arquivo de resultados com dimensões, tamanhos, data de captura (EXIF) e o motivo de cada recusa. A preview leva a marca d'água padrão, como no Lambda. Use `--help` para os detalhes.
+
+Servem para avaliar o resultado visual e o comportamento com arquivos reais. Não passam pelo S3, pela fila nem pelas regras de reivindicação.
+
 ## O que só se valida na stack real
 
 Os testes locais simulam o SDK da AWS ou usam o DynamoDB Local. Eles **não** validam:
 
 - o JWT authorizer e os scopes;
+- o authorizer do link, o cache dele e o CORS do header `x-access-token`;
 - as políticas IAM das funções;
 - o CORS da API e do bucket;
 - a policy do presigned POST;
 - a entrega dos eventos do S3 para a fila;
 - o gatilho do Cognito;
+- a distribuição CloudFront e o acesso ao bucket de mídia;
+- a agenda do reconciliador de exclusões;
 - o binário do sharp na arquitetura da Lambda.
 
 O repositório não usa LocalStack. O `README.md` registra o motivo: ele emularia justamente os pontos que precisam ser validados contra o comportamento real.
 
 ## Divergências do `README.md`
 
-O `README.md` do repositório `lumora` cita comandos e artefatos que não existem atualmente: `pnpm process:local`, os scripts `verify-event`, `generate-fixtures` e `delete-event`, testes com Playwright e o perfil AWS `photos-dev`. Use os comandos desta página, que correspondem ao `package.json` e ao `samconfig.toml` atuais.
+O `README.md` do repositório `lumora` cita comandos e artefatos que não existem atualmente: os scripts `verify-event`, `generate-fixtures` e `delete-event`, testes com Playwright e o perfil AWS `photos-dev`. Use os comandos desta página, que correspondem ao `package.json` e ao `samconfig.toml` atuais. Os comandos `pnpm process:image` e `pnpm process:local` existem.
