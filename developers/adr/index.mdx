@@ -19,6 +19,13 @@ Um ADR (Architecture Decision Record) registra **por que** uma decisão foi toma
 | [007](/developers/adr/007-processing-lease-and-pinned-version) | Lease de processamento e versão fixada do original | Aceita |
 | [008](/developers/adr/008-derivatives-per-attempt) | Derivados em uma pasta por tentativa | Aceita |
 | [009](/developers/adr/009-derived-photo-counters) | Contadores de fotos derivados na leitura | Aceita |
+| [010](/developers/adr/010-client-access-token) | Acesso do cliente por token no link | Aceita |
+| [011](/developers/adr/011-selection-counter-and-revision) | Seleção com contador e revisão no evento | Aceita |
+| [012](/developers/adr/012-order-in-three-steps) | Pedido em três passos: abrir, montar e publicar | Aceita |
+| [013](/developers/adr/013-server-side-price-and-package-lock) | Valor calculado no servidor e pacote travado pelo primeiro pedido | Aceita |
+| [014](/developers/adr/014-media-bucket-and-cdn) | Mídia em bucket próprio, entregue pelo CloudFront | Aceita |
+| [015](/developers/adr/015-event-deletion-tombstone-and-reconciler) | Exclusão de evento com tombstone, limpeza em páginas e reconciliador | Aceita |
+| [016](/developers/adr/016-reprocessing-keeps-state) | Reprocessamento que preserva o estado da foto | Aceita |
 
 ## Origem destes registros
 
@@ -26,7 +33,7 @@ Estes ADRs foram escritos a partir do código e da seção "Decisões de base" d
 
 Só foram registradas decisões **confirmadas no código atual**. Onde o `README.md` descreve algo diferente do que está implementado, o ADR segue o código e aponta a diferença.
 
-Decisões do `README.md` que ainda não têm implementação não viraram ADR. É o caso de pagamentos (D11), downloads por URL assinada (D12), a separação em três buckets (D6) e o token de galeria para clientes (parte de D8).
+Decisões do `README.md` que ainda não têm implementação não viraram ADR. É o caso de pagamentos (D11), downloads por URL assinada (D12) e do bucket `web` (parte de D6). A separação entre originais e mídia (parte de D6) e o token para clientes (parte de D8) estão implementados e registrados nos ADRs 014 e 010.
 
 ## Formato
 

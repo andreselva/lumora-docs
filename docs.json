@@ -97,7 +97,14 @@
               "developers/adr/006-s3-sqs-lambda-processing",
               "developers/adr/007-processing-lease-and-pinned-version",
               "developers/adr/008-derivatives-per-attempt",
-              "developers/adr/009-derived-photo-counters"
+              "developers/adr/009-derived-photo-counters",
+              "developers/adr/010-client-access-token",
+              "developers/adr/011-selection-counter-and-revision",
+              "developers/adr/012-order-in-three-steps",
+              "developers/adr/013-server-side-price-and-package-lock",
+              "developers/adr/014-media-bucket-and-cdn",
+              "developers/adr/015-event-deletion-tombstone-and-reconciler",
+              "developers/adr/016-reprocessing-keeps-state"
             ]
           },
           {

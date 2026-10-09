@@ -22,12 +22,14 @@ Além disso, o sistema é multi-inquilino. Um fotógrafo nunca pode alcançar da
 
 Usar uma única tabela DynamoDB, `lumora-app`, com chaves genéricas `PK` e `SK`.
 
-Há duas famílias de partição:
+A tabela tem duas famílias de partição que carregam o dono:
 
-- `USER#{sub}`, com o perfil e os eventos do fotógrafo;
+- `USER#{sub}`, com o perfil, os eventos e os tombstones de exclusão do fotógrafo;
 - `USER#{sub}#EVENT#{eventId}`, com as galerias, fotos e fingerprints de um evento.
 
-O `sub` do Cognito faz parte de toda chave. A partição do evento carrega o dono explicitamente.
+O `sub` do Cognito faz parte de toda chave dessas famílias. A partição do evento carrega o dono explicitamente.
+
+Três famílias **não** carregam o dono: `GALLERY#{galleryId}` (a seleção do cliente), `ORDER#{orderId}` (o pedido e seus itens) e `PUBLIC_TOKEN#{hash}` (o registro do link). Nelas, o isolamento vem de uma regra de código, e não da chave: quem lê precisa provar antes que a galeria ou o pedido pertence ao evento do link ou ao fotógrafo. O registro desses itens guarda `ownerId` e `eventId`, e as leituras os conferem. Veja [Modelo de dados](/developers/architecture/data-model#partições-que-não-levam-o-dono).
 
 ## Consequências
 
@@ -35,7 +37,7 @@ O `sub` do Cognito faz parte de toda chave. A partição do evento carrega o don
 
 - Isolamento por construção. Sem o `sub`, não há como endereçar um evento, uma galeria ou uma foto. Um id de outro fotógrafo resulta em item não encontrado.
 - Cada partição corresponde a um agregado. Listar as fotos de uma galeria ou contar as fotos de um evento é uma `Query` em uma única partição.
-- Escritas condicionais e transações cobrem as invariantes: evento com galeria principal, registro único por fingerprint e criação atômica do tombstone quando um evento é excluído.
+- Escritas condicionais e transações cobrem as invariantes: evento com galeria principal, registro único por fingerprint, criação atômica do tombstone quando um evento é excluído, teto da seleção do cliente e pedido único por evento.
 - Sem conexões a gerenciar e sem capacidade a provisionar.
 
 **Custos**
@@ -44,12 +46,13 @@ O `sub` do Cognito faz parte de toda chave. A partição do evento carrega o don
 - O modelo é menos legível que tabelas relacionais. As chaves precisam de documentação, em [Modelo de dados](/developers/architecture/data-model).
 - Todas as fotos de um evento ficam em uma partição. Contagens por estado custam proporcionalmente ao número de fotos. Veja o [ADR-009](/developers/adr/009-derived-photo-counters).
 - Mudar o formato de uma chave exige migrar dados. O código já carrega tolerâncias a formatos anteriores.
+- Nas partições sem o dono, o isolamento depende de cada leitura lembrar da prova de propriedade. Uma leitura nova nessas partições sem essa prova abriria acesso entre fotógrafos.
 
 ## Diferenças em relação ao `README.md`
 
-- O `README.md` descreve capacidade provisionada. O template usa capacidade sob demanda (`PAY_PER_REQUEST`), e o teste `scripts/infra-template.test.ts` verifica isso.
-- O `README.md` atribui ao `GSI1` a consulta de pedidos por fotógrafo e prevê um `GSI2`. Hoje o `GSI1` é usado pela reconciliação de exclusões de evento, na partição `EVENT_DELETION#PENDING`; o `GSI2` não existe. Pedidos não estão implementados.
-- O `README.md` lista padrões de chave para tokens de galeria, seleção, pedidos e webhooks. Nenhum deles existe no código.
+- O `README.md` descreve capacidade provisionada. O template usa capacidade sob demanda (`PAY_PER_REQUEST`), e o teste `tests/infra-template.test.ts` verifica isso.
+- O `GSI1` tem dois usos no código: a reconciliação de exclusões de evento, na partição `EVENT_DELETION#PENDING`, e a lista de pedidos do fotógrafo, na partição `USER#{sub}`. O `GSI2` que o `README.md` prevê não existe.
+- O `README.md` lista padrões de chave para tokens de galeria, seleção, pedidos e webhooks. Existem os de token (`PUBLIC_TOKEN#`), seleção (`GALLERY#`/`SEL#`) e pedidos (`ORDER#`). Os de webhook não existem.
 
 ## Alternativas
 

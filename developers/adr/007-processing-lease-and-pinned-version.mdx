@@ -32,6 +32,7 @@ Coordenar o processamento com atributos no próprio item da foto, alterados por 
 - **Conclusão restrita ao dono.** A conclusão exige estado `PROCESSING`, a mesma tentativa, a mesma versão e lease válido. Ela remove o lease e grava `completedAttemptId`.
 - **Repetição reconhecida.** Reivindicação e conclusão inspecionam o item devolvido na falha de condição e aceitam a própria repetição.
 - **Ordem dos tempos.** Timeout da Lambda (60 s) menor que o lease (90 s), menor que o visibility timeout (360 s).
+- **Mesmo protocolo no reprocessamento.** O reprocessamento reivindica com o mesmo lease de 90 segundos e a mesma versão fixada, mas não muda o estado da foto. Veja o [ADR-016](/developers/adr/016-reprocessing-keeps-state).
 
 ## Consequências
 

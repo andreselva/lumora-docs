@@ -1,0 +1,57 @@
+---
+title: "ADR-013 — Valor calculado no servidor e pacote travado pelo primeiro pedido"
+description: "O total do pedido sai do pacote gravado no evento e do número de fotos copiadas, em centavos inteiros. O pacote não muda depois do primeiro pedido."
+sidebarTitle: "013 — Valor no servidor e pacote travado"
+---
+
+## Status
+
+Aceita. Origem: decisão D8 do `README.md` do repositório `lumora` e a regra, nos comentários do código, de que o valor nunca vem do cliente.
+
+## Contexto
+
+O pedido tem valor. O cliente é quem aciona a criação, então nada do que ele envia pode definir o que será cobrado.
+
+O fotógrafo combina um pacote com o cliente: valor, fotos incluídas, preço das fotos adicionais e quem cobra o pacote. Se o pacote mudasse depois que o cliente viu o valor, o pedido deixaria de corresponder ao que foi combinado.
+
+Valores monetários em ponto flutuante acumulam erro de arredondamento.
+
+## Decisão
+
+- **Centavos inteiros.** `Money` só aceita inteiros seguros. A moeda é fixa, `BRL`.
+- **Cálculo no servidor.** `quote` é uma função pura do número de fotos e do pacote. `POST /public/orders` não tem corpo.
+- **Retrato do pacote.** O pedido guarda uma cópia do pacote no instante em que a seleção foi congelada. O valor sai dela, e não do pacote atual do evento.
+- **Fotos efetivamente copiadas.** O número de fotos do cálculo é `assembly.copied`, e não o contador do evento.
+- **`billing`.** Com `OUTSIDE`, o pacote entra no total como zero. Com `PLATFORM`, é cobrado.
+- **Pedido de valor zero** já nasce `CONFIRMED`, sem passar por pagamento.
+- **Pacote travado.** O pacote só muda com `orderCount = 0`. O primeiro pedido soma 1 em `orderCount`, na transação de abertura, que também confere que o pacote é o lido. `orderCount` **nunca desce**, nem quando o pedido é cancelado.
+- **Prévia no cliente.** A tela calcula o valor da seleção com a mesma conta, só para exibir. Um teste de paridade compara as duas.
+
+## Consequências
+
+**Benefícios**
+
+- Um cliente mal-intencionado não consegue alterar o valor.
+- O valor do pedido corresponde ao pacote que valia quando a seleção foi congelada, e a disputa entre mudar o pacote e abrir o pedido tem um único vencedor.
+- Sem erro de arredondamento.
+- Uma foto excluída antes da publicação não é cobrada.
+
+**Custos e trade-offs**
+
+- A conta existe em duas implementações, `quote` (backend) e `selectionPrice` (frontend). O teste `tests/selection-price-parity.test.ts` as mantém iguais.
+- Cancelar um pedido não destrava o pacote. Depois do primeiro pedido, o fotógrafo não consegue mais corrigir o pacote daquele evento.
+- Mudar o pacote antes do primeiro pedido, com a seleção em andamento, pode deixar a seleção acima do que o novo pacote vende. O pedido é então recusado até o cliente desmarcar fotos.
+- `PENDING_PAYMENT` ainda não tem continuação: não existe pagamento no código.
+
+**Invariantes a preservar**
+
+- Nenhum valor ou item enviado pelo cliente entra na conta.
+- O valor do pedido sai do retrato do pacote do pedido.
+- `orderCount` não decresce.
+- A conta do frontend e a do backend produzem o mesmo resultado.
+
+## Alternativas
+
+Não há alternativas registradas no repositório para esta decisão.
+
+Veja [Criação de pedidos](/developers/flows/order-creation#o-cálculo-do-valor) e [Pacote, publicação e link de acesso](/developers/flows/event-package-and-access-link#o-pacote-trava-com-o-primeiro-pedido).

@@ -6,7 +6,7 @@ sidebarTitle: "008 — Derivados por tentativa"
 
 ## Status
 
-Aceita. Origem: decisão D10 do `README.md` do repositório `lumora`, regra "Versão do original".
+Aceita. Origem: decisão D10 do `README.md` do repositório `lumora`, regra "Versão do original". O trecho sobre o bucket dos derivados foi substituído pelo ADR-014.
 
 ## Contexto
 
@@ -21,7 +21,7 @@ Os derivados também são gravados com cache de longa duração e marcados como 
 - Gravar os derivados em `photos/{ownerId}/{eventId}/{galleryId}/{photoId}/attempts/{attemptId}/`.
 - Na conclusão, gravar na foto o `completedAttemptId`.
 - Na leitura, montar a chave da miniatura a partir de `completedAttemptId`.
-- Manter os derivados no mesmo bucket do original, sob o prefixo da foto, em WebP.
+- Gravar os derivados em WebP, sob o mesmo prefixo da foto, no bucket de mídia (veja o [ADR-014](/developers/adr/014-media-bucket-and-cdn)).
 - Incluir no nome do arquivo a versão das regras de geração (`thumb-v1.webp`, `preview-v1.webp`).
 
 ## Consequências
@@ -31,7 +31,7 @@ Os derivados também são gravados com cache de longa duração e marcados como 
 - Duas tentativas nunca escrevem no mesmo objeto. Não é preciso escrita condicional no S3.
 - Miniatura e preview publicadas vêm sempre da mesma tentativa.
 - Um objeto publicado nunca muda, o que é coerente com o cabeçalho `immutable`.
-- Tudo de uma foto fica sob um único prefixo.
+- Tudo de uma foto fica sob o mesmo prefixo, ainda que em dois buckets.
 
 **Custos**
 
@@ -41,9 +41,9 @@ Os derivados também são gravados com cache de longa duração e marcados como 
 
 ## Diferenças em relação ao `README.md`
 
-O `README.md` (decisão D6) descreve três buckets, `web`, `originals` e `media`, com os derivados em um bucket próprio atrás de CloudFront. O argumento é que separar originais de mídia impede que um erro de configuração do CDN exponha um original.
+O `README.md` (decisão D6) descreve três buckets, `web`, `originals` e `media`, com os derivados em um bucket próprio atrás de CloudFront.
 
-O código atual usa **um único bucket**, privado, sem CloudFront. Originais e derivados compartilham o prefixo `photos/`, e a miniatura é servida por URL assinada. A separação em buckets é uma consideração futura registrada em [Limitações](/developers/limitations#considerações-futuras).
+O código atual usa **dois buckets**: o de originais e o de mídia, este atrás de CloudFront. Não existe o bucket `web`: o template não hospeda o frontend. A separação entre originais e mídia está registrada no [ADR-014](/developers/adr/014-media-bucket-and-cdn).
 
 ## Alternativas
 
