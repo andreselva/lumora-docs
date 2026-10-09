@@ -1,0 +1,58 @@
+---
+title: "ADR-015 — Exclusão de evento com tombstone, limpeza em páginas e reconciliador"
+description: "A exclusão remove o evento da vista e registra o trabalho pendente na mesma transação. A limpeza é assíncrona, e um reconciliador agendado a leva até o fim."
+sidebarTitle: "015 — Exclusão com tombstone"
+---
+
+## Status
+
+Aceita. Origem: decisão D17 do `README.md` do repositório `lumora`, que o `README.md` ainda marca como proposta. O código a implementa.
+
+## Contexto
+
+Um evento pode ter milhares de fotos, galerias e arquivos no S3. Excluí-lo numa única requisição de 10 segundos não é possível.
+
+A exclusão é definitiva e começa com uma confirmação explícita do fotógrafo. Ela não exige que o evento esteja vazio.
+
+Uma limpeza em segundo plano pode parar: uma mensagem se perde, vai para a DLQ, ou a requisição cai antes de enfileirar todas as galerias. E o evento já saiu da vista do fotógrafo.
+
+## Decisão
+
+- **Confirmação.** `POST /events/{eventId}/delete` exige o corpo `{ "confirmation": "compreendo, excluir evento definitivamente" }`.
+- **Remoção e registro, atomicamente.** Uma transação apaga o item ativo do evento, cria o tombstone `EVENT_DELETION#{eventId}` em `DELETING` e apaga o registro do link de acesso. O tombstone entra no `GSI1`, na partição esparsa `EVENT_DELETION#PENDING`, com a hora da primeira conferência (30 minutos).
+- **Enfileiramento.** Em seguida, uma mensagem `GALLERY` por galeria vai à fila de exclusão. Repetir a requisição depois de o evento ter saído retoma o enfileiramento, se ele não terminou.
+- **Limpeza em páginas.** O `deletePhotosGallery` exclui até 250 fotos por mensagem, sob um lease de 90 segundos da galeria, e publica a próxima página. Quando uma galeria acaba, ela é removida. A última a sair conclui o tombstone (`DELETED`).
+- **Reconciliador.** A cada 15 minutos, a função lê os tombstones vencidos no `GSI1`. Para cada um: se não há mais galerias, conclui; se todas progridem (o `updatedAt` mudou nos últimos 15 minutos), só reagenda; se alguma parou, reenfileira essa galeria **sem cursor**, a partir do estado atual. As tentativas reais recuam de 1 hora até 24 horas.
+- **Fonte da verdade.** O estado persistido, e não a mensagem. O reconciliador não tenta reconstruir a execução a partir de logs.
+
+## Consequências
+
+**Benefícios**
+
+- O evento some da vista na hora, e o trabalho pendente nunca se perde: a mesma transação os registra.
+- A exclusão converge mesmo se mensagens se perderem. Recomeçar sem cursor funciona porque o que já foi excluído não existe mais.
+- Uma exclusão saudável, mas longa, não é reiniciada: o sinal de progresso é o `updatedAt` da galeria.
+- O lease serializa o worker e uma mensagem de recuperação.
+- O backoff evita reenfileirar a cada execução uma galeria que sempre falha.
+
+**Custos e trade-offs**
+
+- O evento sai da vista antes de a limpeza terminar. Durante a janela, fotos e arquivos ainda existem.
+- O índice é eventualmente consistente, e o reconciliador tolera um tombstone já concluído que ainda apareça nele.
+- O reconciliador cobre só a exclusão de **evento**. A exclusão isolada de galeria, a de fotos escolhidas e o processamento de imagem dependem da fila, da DLQ e do alarme.
+- A exclusão não remove os **pedidos** do evento. Eles continuam na lista do fotógrafo, sem o nome do evento.
+- Os leases de exclusão de fotos escolhidas (`DELETE_SELECTED#...`) não são removidos por esta limpeza se um worker morrer no passo.
+- A DLQ continua sendo o sinal de falha. O reconciliador garante a convergência, não a investigação.
+
+**Invariantes a preservar**
+
+- A transação que remove o evento é a mesma que cria o tombstone.
+- O reconciliador usa cursor `undefined` ao reenfileirar.
+- Uma conclusão repetida não volta o tombstone ao índice pendente.
+- O worker de exclusão e o reconciliador compartilham o lease da galeria.
+
+## Alternativas
+
+Não há alternativas registradas no repositório para esta decisão.
+
+Veja [Reconciliação da exclusão de eventos](/developers/flows/event-deletion-reconciliation) e [Exclusão de fotos](/developers/flows/photo-deletion).

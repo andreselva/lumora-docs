@@ -1,0 +1,58 @@
+---
+title: "ADR-011 — Seleção com contador e revisão no evento"
+description: "A seleção do cliente é um item por foto, e o contador, a revisão e o pedido ativo ficam no evento. As regras valem como condições da escrita."
+sidebarTitle: "011 — Contador e revisão da seleção"
+---
+
+## Status
+
+Aceita. Origem: decisões D2 e D8 do `README.md` do repositório `lumora`, que os comentários do código citam para a seleção e o congelamento.
+
+## Contexto
+
+O cliente marca fotos em várias galerias do mesmo evento, às vezes em duas abas. A seleção precisa de:
+
+- um **teto** que vale para o evento inteiro quando o pacote não vende fotos adicionais;
+- **idempotência**: repetir uma marcação não conta duas vezes;
+- **leituras coerentes**: o total exibido bate com a lista de fotos;
+- **congelamento**: quando o pedido é aberto, a seleção deixa de mudar.
+
+Conferir o teto lendo o contador e depois escrevendo deixaria duas abas passarem juntas do limite. O teto precisa ser conferido **na própria escrita**.
+
+## Decisão
+
+- Cada foto selecionada é um item (`GALLERY#{galleryId}` / `SEL#{photoId}`).
+- O evento guarda `selectionCount` (total do evento), `selectionRevision` (número que só cresce) e `activeOrderId` (o pedido que congelou a seleção).
+- Selecionar é **uma transação** com quatro itens: o `Update` do evento (soma ao contador e à revisão, sob as condições de link válido, sem pedido ativo e abaixo do teto), a conferência da galeria ativa, a conferência da foto `AVAILABLE` e o `Put` do item da seleção, que só entra se não existir. Desmarcar segue o mesmo desenho, com o `Delete` condicionado a existir.
+- Quando a transação é recusada, o caso de uso lê o estado para decidir **o motivo**, numa ordem fixa: link, galeria, foto, já selecionada, pedido ativo e teto.
+- A leitura da seleção é **cercada pela revisão**: lê o evento, depois os ids, depois o evento de novo, e só devolve se a revisão não mudou. Até três tentativas.
+- Toda mudança da seleção, inclusive a exclusão de uma foto selecionada pelo fotógrafo, sobe a revisão na mesma transação.
+
+## Consequências
+
+**Benefícios**
+
+- O teto vale mesmo com marcações simultâneas.
+- Repetir uma marcação não altera o contador: o item já existente cancela a transação, e o caso de uso trata o cancelamento como sucesso.
+- O cliente nunca vê um total que contradiz a lista.
+- A revisão permite a outras operações, como a montagem do pedido, saber que a seleção mudou, mesmo quando o contador voltou ao mesmo valor.
+- O congelamento é só uma condição: com `activeOrderId`, as escritas de seleção são recusadas.
+
+**Custos e trade-offs**
+
+- Todas as marcações de um evento escrevem no **mesmo item**. Há contenção (`TransactionConflict`), tratada com até 3 repetições do repositório e uma fila por galeria no frontend.
+- A regra do teto existe em duas formas, `selectionLimit` e `BELOW_SELECTION_LIMIT`, que precisam mudar juntas.
+- A partição da seleção não leva o dono. Quem a lê precisa provar antes que a galeria é do evento do link ou do fotógrafo.
+- O contador e a revisão são parte das regras de negócio, e não contadores de progresso como os do [ADR-009](/developers/adr/009-derived-photo-counters).
+
+**Invariantes a preservar**
+
+- O item da seleção e o contador mudam na mesma transação.
+- Qualquer nova escrita que altere a seleção precisa subir `selectionRevision`.
+- A exclusão de fotos não é barrada pelo congelamento, e por isso sobe a revisão: é o que permite à montagem do pedido detectar que a seleção mudou.
+
+## Alternativas
+
+Não há alternativas registradas no repositório para esta decisão.
+
+Veja o fluxo em [Seleção de fotos](/developers/flows/photo-selection).

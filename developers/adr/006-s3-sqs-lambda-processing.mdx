@@ -20,7 +20,8 @@ O processamento precisa de um ponto que absorva essas rajadas, limite a concorr�
 - Uma Lambda dedicada, o `imageProcessor`, consome a fila com **lote de 1** e **concorrência máxima de 30**.
 - A fila tem uma **DLQ**, para onde a mensagem vai depois de 5 recebimentos.
 - O handler usa **resposta parcial de lote** (`ReportBatchItemFailures`).
-- Falhas são classificadas: conteúdo inválido marca a foto como `FAILED` e encerra; qualquer outra falha devolve a mensagem à fila.
+- Falhas são classificadas: conteúdo inválido marca a foto como `FAILED` e encerra; qualquer outra falha devolve a mensagem à fila. Uma mensagem malformada é descartada sem retry.
+- A mesma fila recebe também os jobs de reprocessamento (`REPROCESS_PHOTO`), publicados pela `studio-api`. O `ImageJobNormalizer` distingue os dois tipos de mensagem. Veja o [ADR-016](/developers/adr/016-reprocessing-keeps-state).
 - Um alarme no CloudWatch dispara quando há mensagem visível na DLQ.
 
 ## Consequências

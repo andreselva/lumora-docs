@@ -1,0 +1,54 @@
+---
+title: "ADR-014 — Mídia em bucket próprio, entregue pelo CloudFront"
+description: "Miniaturas e previews ficam num bucket separado do dos originais, lido só pela distribuição, por URLs públicas e imutáveis."
+sidebarTitle: "014 — Bucket de mídia e CDN"
+---
+
+## Status
+
+Aceita. Origem: parte da decisão D6 do `README.md` do repositório `lumora`, e o comentário do template que registra o motivo da separação. Substitui o trecho do [ADR-008](/developers/adr/008-derivatives-per-attempt) que mantinha os derivados no bucket dos originais.
+
+## Contexto
+
+A área do cliente exibe dezenas ou centenas de miniaturas por tela, em celular. Servi-las pela API, ou por URLs assinadas do S3, custa tempo e computação. Um CDN resolve, mas exige que o conteúdo servido seja público para a distribuição.
+
+Os originais, por outro lado, são o ativo do fotógrafo e não podem estar ao alcance de nenhuma configuração do CDN.
+
+## Decisão
+
+- Usar **dois buckets** privados: o de **originais**, versionado, e o de **mídia**, com as miniaturas e previews.
+- Só o bucket de mídia tem uma distribuição CloudFront na frente. A origem é acessada por Origin Access Control (SigV4), e a bucket policy restringe `s3:GetObject` ao ARN da distribuição.
+- O `imageProcessor` grava os derivados no bucket de mídia, com `Cache-Control: public, max-age=31536000, immutable`.
+- A API devolve **URLs do CloudFront**, montadas a partir de `MEDIA_BASE_URL`, sem assinatura.
+- A chave inclui o `attemptId` ([ADR-008](/developers/adr/008-derivatives-per-attempt)). Uma tentativa nova produz uma URL nova, então nunca é preciso invalidar o CDN.
+- A distribuição serve só `GET` e `HEAD`, por HTTPS, com a política de cache gerenciada `CachingOptimized`.
+
+## Consequências
+
+**Benefícios**
+
+- Nenhum erro de configuração da distribuição alcança um original: ela só enxerga o bucket de mídia.
+- A API não assina leituras nem toca em bytes de mídia. A `public-api` nem tem permissão de S3.
+- O cache é eficaz: o objeto publicado nunca muda.
+- A grade do cliente carrega miniaturas direto da borda.
+
+**Custos e trade-offs**
+
+- As URLs **não são assinadas**. Quem tiver a URL de um derivado o baixa, mesmo depois de o link do cliente vencer ou ser substituído. A barreira é a dificuldade de adivinhar a URL, que contém o `sub` do fotógrafo, os ULIDs de evento, galeria e foto e o UUID da tentativa. Atualmente nada restringe o CDN por link, cookie ou WAF.
+- A miniatura não tem marca d'água; só a preview tem.
+- Excluir uma foto remove os derivados da tentativa publicada, no bucket de mídia, mas o código não invalida a distribuição. Objetos já em cache nas bordas podem continuar servidos até o cache expirar. É a consequência de um cabeçalho `immutable` sem invalidação.
+- Derivados de tentativas anteriores não são removidos.
+- Um bucket e uma distribuição a mais para manter.
+- A separação em `web` (hospedagem do frontend) prevista no `README.md` não existe: o template não hospeda a SPA.
+
+**Invariantes a preservar**
+
+- O bucket de originais nunca é origem de uma distribuição.
+- Um derivado publicado não é sobrescrito.
+- A chave do derivado inclui a tentativa.
+
+## Alternativas
+
+O `README.md` descreve uma terceira separação (`web`, `originals` e `media`). Não há outras alternativas registradas no repositório.
+
+Veja [Acesso do cliente](/developers/flows/public-access#entrega-da-mídia) e [Infraestrutura](/developers/architecture/infrastructure#s3-e-cloudfront).

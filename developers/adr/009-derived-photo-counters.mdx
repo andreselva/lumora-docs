@@ -21,7 +21,7 @@ A forma direta de servir esses números é manter contadores no item do evento, 
 
 O código ainda mantém `registeredPhotoCount` no item do evento. Ele não é um contador operacional de progresso: é atualizado no registro e na exclusão definitiva das fotos e pode ser copiado para o tombstone como retrato informativo.
 
-O atributo `photoCount` é legado e continua sendo gravado como 0 na criação do evento. Ele não participa da exclusão atual. `pendingPhotoCount` pertence a um modelo anterior e não orienta o fluxo atual.
+O atributo `photoCount` é legado: foi removido do domínio e a criação do evento já não o grava. Itens antigos podem tê-lo. `pendingPhotoCount` pertence a um modelo anterior e não orienta o fluxo atual.
 
 Derivar a contagem tem um custo proporcional ao número de fotos. Esse custo só se justifica onde a tela mostra o progresso.
 
@@ -37,7 +37,7 @@ Separar dois tipos de contador.
 
 A exclusão de evento segue a decisão D17: o evento pode ser removido mesmo com conteúdo. `DynamoDbEventRepository.delete` cria um tombstone `EVENT_DELETION` e a limpeza de galerias e fotos continua de forma assíncrona. Os contadores copiados para o tombstone são informativos e não funcionam como precondição da exclusão.
 
-O atributo legado `photoCount` continua sendo gravado como 0 na criação do evento. Nenhum código o lê ou atualiza.
+O atributo legado `photoCount`, que eventos antigos podem ter, não é lido nem atualizado por nenhum código.
 
 ## Consequências
 
@@ -63,6 +63,10 @@ O `README.md` registra a alternativa descartada: contadores no evento com `ADD` 
 Uma contagem por índice ou por agregados incrementais não está registrada no repositório. Fica como consideração futura caso o custo da leitura se torne relevante.
 
 Expor `registeredPhotoCount` no contrato de evento, para substituir o `photoCount`, foi descartado. Ele conta fotos registradas, incluindo as que ainda aguardam arquivo, mas não representa o estado operacional do processamento. Por isso não substitui o resumo derivado por `status`.
+
+## Contadores de seleção e de pedido
+
+O evento também tem contadores persistidos de outra natureza: `selectionCount`, `selectionRevision` e `orderCount`. Eles **não** são contadores de progresso. São parte das regras de negócio da seleção e do pedido e são atualizados na mesma transação do item que contam, porque o teto do pacote e o pedido único por evento são conferidos na própria escrita. A decisão está no [ADR-011](/developers/adr/011-selection-counter-and-revision).
 
 ## Revisão
 

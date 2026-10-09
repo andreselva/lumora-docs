@@ -1,0 +1,56 @@
+---
+title: "ADR-016 — Reprocessamento que preserva o estado da foto"
+description: "O reprocessamento é um job na fila do processamento. A foto mantém o estado e os derivados até a nova tentativa concluir, e a troca é uma única escrita."
+sidebarTitle: "016 — Reprocessamento sem mudar o estado"
+---
+
+## Status
+
+Aceita. Origem: decisão D9 do `README.md` do repositório `lumora`, seção "Reprocessamento", que os comentários do código citam.
+
+## Contexto
+
+O fotógrafo precisa recuperar fotos que falharam sem reenviar o arquivo. O original já está no S3, com a versão fixada.
+
+Reprocessar uma foto que está `AVAILABLE` não pode escondê-la da galeria do cliente enquanto a nova tentativa roda. E um reprocessamento que falha não pode derrubar uma foto que estava pronta.
+
+O processamento inicial já tem um protocolo de posse temporária ([ADR-007](/developers/adr/007-processing-lease-and-pinned-version)) e derivados por tentativa ([ADR-008](/developers/adr/008-derivatives-per-attempt)).
+
+## Decisão
+
+- **Só publicar o job.** A `studio-api` publica uma mensagem `REPROCESS_PHOTO` na fila de processamento, com a versão fixada e um `requestId` novo a cada pedido HTTP. Ela não altera a foto.
+- **Reivindicação que não muda o estado.** O worker reivindica com um `UpdateItem` que grava apenas `processingAttemptId` e o lease. O `status` e o `completedAttemptId` ficam como estão, então a foto segue visível. A reivindicação exige estado `AVAILABLE` ou `FAILED`, a versão fixada, nenhum lease ativo e um `requestId` ainda não concluído.
+- **Recusa não é erro.** Uma reivindicação recusada registra o motivo, incrementa a métrica `ReprocessRefused` e confirma a mensagem, sem retry.
+- **Conclusão atômica.** O sucesso aponta `completedAttemptId` para a pasta da tentativa nova, grava as dimensões da preview e remove `failureReason`, numa única escrita. Um conteúdo recusado só registra o pedido e libera o lease, mantendo o estado e os derivados.
+- **Mesma fila e mesmo worker.** Os jobs usam a fila, o lote de 1, a DLQ e o alarme do processamento inicial.
+- **Pedidos.** Uma foto, ou todas as fotos `FAILED` do evento.
+
+## Consequências
+
+**Benefícios**
+
+- A foto não pisca nem some durante o reprocessamento.
+- Os derivados publicados mudam atomicamente: quem lê vê a tentativa antiga ou a nova.
+- Reprocessar nunca piora o estado.
+- Reaproveita o protocolo de posse do processamento inicial.
+- Não mexe em contadores do evento nem na seleção do cliente.
+
+**Custos e trade-offs**
+
+- A foto reprocessada **não aparece em `PROCESSING`**. O resumo do evento não mostra o trabalho em andamento, e o Studio precisa de um acompanhamento próprio dos pedidos (`reprocessWatch`).
+- Os derivados da tentativa anterior ficam órfãos, sem limpeza.
+- O job lê a **mesma versão** do original. Se a causa da falha é o conteúdo, o resultado se repete.
+- O `reprocessRequestId` guarda só o último pedido concluído. A reentrega de um pedido mais antigo reprocessa de novo. O resultado é equivalente, ao custo de refazer o trabalho.
+- Dois pedidos do fotógrafo geram dois jobs; o segundo é recusado se o primeiro ainda roda.
+
+**Invariantes a preservar**
+
+- A reivindicação não toca em `status` nem em `completedAttemptId`.
+- A conclusão exige o mesmo `processingAttemptId`, a mesma versão e lease válido.
+- Cada tentativa grava numa pasta própria.
+
+## Alternativas
+
+Não há alternativas registradas no repositório para esta decisão.
+
+Veja [Reprocessamento de fotos](/developers/flows/photo-reprocessing).

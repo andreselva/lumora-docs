@@ -1,0 +1,67 @@
+---
+title: "ADR-010 — Acesso do cliente por token no link"
+description: "O cliente entra sem conta por um token no link. Um authorizer só autentica o token, e cada operação confere o direito contra o evento."
+sidebarTitle: "010 — Token no link"
+---
+
+## Status
+
+Aceita. Origem: parte da decisão D8 do `README.md` do repositório `lumora`, a que trata do acesso de clientes. A outra parte, o Cognito para fotógrafos, está no [ADR-002](/developers/adr/002-cognito-jwt-authorizer).
+
+## Contexto
+
+O cliente que recebe a galeria não tem conta e não deve precisar de uma. O acesso é por um link enviado ao cliente por outro canal.
+
+Isso cria exigências específicas:
+
+- O link é uma credencial. Ele não pode ser adivinhado, e o banco não deve guardá-lo em claro.
+- O fotógrafo precisa poder **substituir** o link, e a substituição tem de valer logo.
+- A grade de fotos gera muitas requisições. Autenticar cada uma lendo o banco custa tempo e dinheiro, e o API Gateway pode guardar em cache a resposta de um authorizer. Mas um cache não pode estender um direito além do que a regra permite.
+- O que o cliente alcança é o **evento** inteiro, com todas as suas galerias, e não uma galeria isolada.
+
+## Decisão
+
+**O token.** Trinta e dois bytes aleatórios, em base64url, com 43 caracteres. Só o hash SHA-256 é gravado. O token em claro existe na resposta da geração e na URL que o cliente recebe.
+
+**Um link por evento.** O link pertence ao evento. Gerar outro o substitui, numa transação que grava o hash novo no evento, cria o registro do token novo e apaga o anterior. A geração exige que o evento já tenha pacote.
+
+**O authorizer só autentica.** O `public-access-authorizer` confere o formato do token e se ele existe, e devolve o contexto `{ pgId, eventId, tokenHash }`. Usa resposta simples e cache de 60 segundos por valor de token. Token malformado e token desconhecido falham com o mesmo erro.
+
+**Cada operação autoriza.** A `public-api` lê o evento a cada operação e aplica a regra `canAccessEvent` (evento publicado, link atual, não vencido, não revogado). As escritas aplicam a mesma regra como condição do DynamoDB (`LINK_GRANTS_ACCESS`). Nenhuma rota aceita dono ou evento do cliente: só o contexto do authorizer.
+
+**Um pedido já aberto pertence ao evento.** Ver o pedido exige apenas que o link seja o atual do evento, sem exigir a janela de seleção. Abrir e cancelar exigem o link valendo.
+
+**Função própria.** A `public-api` é uma Lambda separada da `studio-api`, só com DynamoDB, e cada rota tem throttling próprio.
+
+**No navegador.** O token fica só na memória do cliente de API.
+
+## Consequências
+
+**Benefícios**
+
+- O cliente entra sem conta.
+- A substituição do link vale na leitura seguinte, porque a validade vem do evento lido, e não do cache do authorizer. O cache de 60 segundos reduz a carga sem estender direito algum.
+- O banco nunca guarda o token em claro, e o DTO do evento nunca o devolve.
+- O authorizer é só leitura (`GetItem`), e a `public-api` não alcança S3.
+
+**Custos e trade-offs**
+
+- O link é uma **credencial portadora**: quem o tem alcança tudo o que o link dá, e o sistema não identifica o cliente.
+- O token faz parte do caminho da URL da página. O host que servir a SPA recebe esse caminho.
+- A regra de acesso existe em duas formas, `canAccessEvent` e `LINK_GRANTS_ACCESS`, que precisam mudar juntas.
+- O authorizer guarda também a negação em cache, pelo mesmo prazo.
+- O campo de revogação antecipada (`accessLinkRevokedAt`) é lido pela regra, mas nenhum código o grava. Só a substituição invalida um link antes do prazo.
+- Ao excluir o evento, um link gerado entre a leitura e a transação pode deixar um registro de token órfão. Ele não autoriza nada, porque o evento não existe mais.
+- A mídia entregue pelo CloudFront não acompanha o link. Veja o [ADR-014](/developers/adr/014-media-bucket-and-cdn).
+
+**Invariantes a preservar**
+
+- O contexto do authorizer é a única fonte de dono e evento nas rotas do cliente.
+- O authorizer não pode virar a barreira de prazo ou de substituição: a resposta dele fica em cache.
+- Uma operação nova do cliente precisa conferir o direito da sua própria operação.
+
+## Alternativas
+
+Não há alternativas registradas no repositório para esta decisão.
+
+Veja o fluxo em [Acesso do cliente](/developers/flows/public-access) e a geração do link em [Pacote, publicação e link de acesso](/developers/flows/event-package-and-access-link).

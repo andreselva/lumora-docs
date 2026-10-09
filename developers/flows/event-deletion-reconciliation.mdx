@@ -651,12 +651,12 @@ A <code>DeletePhotosGalleryQueueDLQ</code> também possui alarme baseado em <cod
 
 | Assunto | Caminho |
 | --- | --- |
-| Início da exclusão | <code>services/api/src/application/events/DeleteEvent.ts</code> |
+| Início da exclusão | <code>services/api/src/application/events/commands/DeleteEvent.ts</code> |
 | Tombstone, GSI e reagendamento | <code>services/api/src/infra/dynamodb/DynamoDbEventRepository.ts</code> |
 | Constantes de tempo e backoff | <code>services/api/src/domain/event/EventDeletion.ts</code> |
-| Algoritmo do reconciliador | <code>services/api/src/application/events/ReconcileEventDeletions.ts</code> |
+| Algoritmo do reconciliador | <code>services/api/src/application/events/commands/ReconcileEventDeletions.ts</code> |
 | Handler agendado | <code>services/api/src/handlers/schedule/eventDeletionReconciler.ts</code> |
-| Worker de exclusão | <code>services/api/src/application/galleries/DeleteAllPhotosGallery.ts</code> |
+| Worker de exclusão | <code>services/api/src/application/galleries/commands/DeleteAllPhotosGallery.ts</code> |
 | Handler da fila | <code>services/api/src/handlers/sqs/deletePhotosGalleryProcessor.ts</code> |
 | Claim e lease da galeria | <code>services/api/src/infra/dynamodb/DynamoDbGalleryRepository.ts</code> |
 | Configuração das Lambdas, SQS, DLQ e schedule | <code>infra/template.yaml</code> |

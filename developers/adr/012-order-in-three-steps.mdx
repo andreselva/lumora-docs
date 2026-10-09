@@ -1,0 +1,64 @@
+---
+title: "ADR-012 — Pedido em três passos: abrir, montar e publicar"
+description: "A seleção não cabe numa transação. O pedido congela a seleção, copia os itens em páginas retomáveis e só então publica o valor."
+sidebarTitle: "012 — Pedido em três passos"
+---
+
+## Status
+
+Aceita. Origem: decisão D8 do `README.md` do repositório `lumora`, que os comentários do código citam para os estados do pedido.
+
+## Contexto
+
+Fechar a seleção num pedido precisa de garantias que se chocam com os limites da plataforma:
+
+- **Um pedido ativo por evento**, mesmo com várias chamadas simultâneas.
+- **Seleção congelada** e **cópia exata**: os itens do pedido são os da seleção no instante em que ele foi aberto.
+- **Valor só sobre uma cópia completa** e atual.
+- Uma transação do DynamoDB aceita 100 itens. Sem fotos adicionais à venda, a seleção chega a 10.000 fotos. Com adicionais, não há teto.
+- A `public-api` tem 10 segundos por chamada.
+- O fotógrafo pode excluir fotos selecionadas durante a cópia.
+
+## Decisão
+
+Separar a criação em três passos, cada um com sua proteção.
+
+**Abrir.** Uma transação grava `activeOrderId` no evento e cria o pedido em `ASSEMBLING`. Ela só passa se o link vale, não há pedido ativo, a revisão da seleção é a lida e o pacote é o lido. A mesma transação soma 1 em `orderCount`. É essa condição que garante um pedido por evento e congela a seleção.
+
+**Montar.** A seleção é copiada galeria por galeria, em páginas de até 99 fotos. Cada página é uma transação que grava, juntos, os itens e o ponto de parada (`galleryIndex`, `after`, `copied`, `step`). A condição exige que o pedido ainda esteja `ASSEMBLING`, que a montagem seja a mesma e que o `step` seja o lido. Os itens de cada montagem ficam separados pelo id da montagem e nunca são apagados.
+
+**Publicar.** Uma transação tira o pedido de `ASSEMBLING` com o valor calculado e o coloca na lista do fotógrafo, sob a condição de que a montagem seja a mesma e que o evento ainda esteja na revisão da seleção em que a montagem se baseou. Se a revisão mudou, começa outra montagem.
+
+**Retomada.** O tempo da chamada para copiar é de 6 segundos. Se acabar, a resposta é 202 com o pedido em `ASSEMBLING`, e repetir o `POST` continua do ponto gravado. A tela que já conhece o pedido o pede por `?orderId=`, e nunca abre outro no lugar.
+
+**O pedido é do evento.** Quem tem o link atual do evento o vê e o retoma, mesmo depois de a janela de seleção fechar.
+
+## Consequências
+
+**Benefícios**
+
+- Pedido único por evento, sem lock externo.
+- Cada página é contada uma vez. Uma chamada atrasada não grava nada em montagem trocada, publicada ou cancelada.
+- Uma falha em qualquer ponto é retomável: o progresso e os itens estão no banco.
+- Uma exclusão de fotos durante a montagem é detectada e refletida no valor.
+- O valor sai de `assembly.copied`, o que de fato foi copiado.
+
+**Custos e trade-offs**
+
+- Mais complexidade que uma transação única. O protocolo concentra a correção nas condições das escritas e exige testes de concorrência, hoje em `publicOrders.dynamodb.spec.ts`.
+- Os itens de montagens substituídas permanecem na partição do pedido, sem limpeza. É o que protege o pedido publicado de chamadas atrasadas.
+- Nenhum processo finaliza um pedido `ASSEMBLING` abandonado. A seleção fica congelada até alguém repetir o `POST` com o link do evento.
+- Um pedido publicado não acompanha a exclusão posterior de uma foto. Como ainda não há pagamento nem entrega, isso não tem efeito visível, e merece verificação antes de implementar o pagamento. Não foi reproduzido.
+
+**Invariantes a preservar**
+
+- Abrir congela a seleção e trava o pacote na mesma transação.
+- Os itens e o ponto de parada de uma página mudam juntos, sob a condição do `step`.
+- A publicação confere a revisão da seleção.
+- O pedido, depois de publicado, nunca volta a `ASSEMBLING`.
+
+## Alternativas
+
+Não há alternativas registradas no repositório para esta decisão.
+
+Veja o fluxo em [Criação de pedidos](/developers/flows/order-creation).

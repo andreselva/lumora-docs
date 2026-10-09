@@ -6,7 +6,7 @@ sidebarTitle: "003 — Lambdas por contexto"
 
 ## Status
 
-Aceita. Origem: decisões D1, D4 e D5 do `README.md` do repositório `lumora`.
+Aceita. Origem: decisões D1, D4 e D5 do `README.md` do repositório `lumora`. Atualizada para as sete funções atuais.
 
 ## Contexto
 
@@ -18,15 +18,21 @@ Uma função por endpoint multiplica recursos, permissões e cold starts. Uma fu
 
 Criar uma função por **contexto de execução**, e não por endpoint. Uma função nova só se justifica quando o gatilho, as permissões, o timeout ou a memória são diferentes.
 
-Hoje são três:
+Hoje são sete:
 
 | Função | Gatilho | Por que é separada |
 | --- | --- | --- |
-| `studio-api` | HTTP API | Requisições curtas, com leitura e escrita de metadados. |
+| `studio-api` | HTTP API, JWT do Cognito | Requisições do fotógrafo. Permissões de S3 para assinar uploads e de SQS para publicar jobs. |
+| `public-api` | HTTP API, authorizer do link | Requisições do cliente. Só DynamoDB, sem S3 nem filas, e com throttling próprio por rota. |
+| `public-access-authorizer` | Authorizer do HTTP API | Só autentica o token. Só lê (`GetItem`) e tem a resposta em cache no gateway. |
 | `postConfirmation` | Cognito | Outro gatilho. Só precisa de `PutItem`. |
-| `imageProcessor` | SQS | Mais memória e tempo, binário nativo, permissão de leitura de objetos. |
+| `imageProcessor` | SQS | Mais memória e tempo, binário nativo, permissão de leitura de originais e escrita de mídia. |
+| `deletePhotosGallery` | SQS | Exclui objetos nos dois buckets e itens do DynamoDB, e publica a próxima página na própria fila. |
+| `eventDeletionReconciler` | Agenda | Só consulta o índice e reenfileira. |
 
-Dentro da `studio-api`, o roteamento é um `switch` sobre `event.routeKey`. As rotas continuam declaradas uma a uma no template SAM.
+A divisão mais reveladora é a de `studio-api` e `public-api`: são o mesmo tipo de função, mas atendem credenciais diferentes e merecem permissões diferentes. O fotógrafo alcança S3 e filas. O cliente alcança apenas o DynamoDB, e só as operações de seleção e de pedido.
+
+Dentro de cada API, o roteamento é um `switch` sobre `event.routeKey`. As rotas continuam declaradas uma a uma no template SAM.
 
 Não há framework web nem contêiner de injeção de dependência. As dependências são instanciadas no escopo do módulo.
 
@@ -35,7 +41,7 @@ Não há framework web nem contêiner de injeção de dependência. As dependên
 **Benefícios**
 
 - Menos recursos para manter e um único bundle por contexto.
-- Permissões mínimas por contexto. A `studio-api` não lê bytes de fotos; o `imageProcessor` não lista nem exclui itens.
+- Permissões mínimas por contexto. A `studio-api` não lê bytes de fotos; o `imageProcessor` não lista nem exclui itens; a `public-api` não alcança S3.
 - Declarar as rotas no template mantém autorização e limites configuráveis por rota, mesmo com uma só função.
 - Sem camadas de framework no caminho da requisição.
 
@@ -49,4 +55,4 @@ Não há framework web nem contêiner de injeção de dependência. As dependên
 
 O `README.md` registra a intenção de dividir o template em nested stacks quando ele passar de cerca de mil linhas, e de avaliar Step Functions antes de qualquer servidor caso surja um processamento que não caiba em Lambda.
 
-O `README.md` prevê outras quatro funções: `galleryAuthorizer`, `galleryApi`, `paymentWebhook` e `paymentReconciler`. Nenhuma existe atualmente.
+O `README.md` prevê funções de pagamento (`paymentWebhook` e `paymentReconciler`). Nenhuma existe atualmente. O authorizer e a API do cliente, previstos como `galleryAuthorizer` e `galleryApi`, existem como `public-access-authorizer` e `public-api`.
