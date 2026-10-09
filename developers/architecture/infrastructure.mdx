@@ -18,13 +18,14 @@ Esta página explica o papel de cada recurso. Para valores exatos, consulte o te
 | Lambda Layer | `SharpLayer` | Binário nativo do sharp para arm64. |
 | Cognito | User Pool e App Client | Identidade e tokens do fotógrafo. |
 | DynamoDB | `lumora-app` | Todos os metadados. |
-| S3 | bucket de fotos | Originais e derivados. |
+| S3 | `PhotosBucket` e `MediaBucket` | Originais e derivados, em buckets separados. |
+| CloudFront | `MediaDistribution` | Entrega pública dos derivados. |
 | SQS | fila de processamento e DLQ | Desacoplamento e retry do processamento. |
 | SNS | tópico de alarme | Destino do alarme da DLQ. |
 | CloudWatch | log groups e um alarme | Logs das três funções e alarme da DLQ. |
 | IAM | políticas por função | Permissões mínimas de cada Lambda. |
 
-Serviços que o `README.md` do `lumora` menciona, mas que **não** estão no template: CloudFront, EventBridge Scheduler, SSM Parameter Store, WAF e X-Ray.
+Serviços que o `README.md` do `lumora` menciona, mas que **não** estão no template: EventBridge Scheduler, SSM Parameter Store, WAF e X-Ray. O CloudFront, que o README também menciona, está no template e serve os derivados.
 
 ## Funções Lambda
 
@@ -95,7 +96,7 @@ O modelo lógico está em [Modelo de dados](/developers/architecture/data-model)
 
 ## S3
 
-Há um único bucket, privado, que guarda originais e derivados sob o prefixo `photos/`.
+Há dois buckets privados, ambos com chaves sob o prefixo `photos/`. O `PhotosBucket` guarda os originais. O `MediaBucket` guarda os derivados e só é lido pela distribuição CloudFront. A tabela abaixo descreve o `PhotosBucket`; a seção [Bucket de mídia e CloudFront](#bucket-de-mídia-e-cloudfront) descreve o outro.
 
 | Configuração | Valor e motivo |
 | --- | --- |
@@ -107,6 +108,12 @@ Há um único bucket, privado, que guarda originais e derivados sob o prefixo `p
 | Lifecycle | Versões não correntes expiram em 15 dias. Uploads multipart incompletos são abortados em 3 dias. |
 | CORS | Permite `GET` e `POST` a partir da origem do frontend, definida pelo parâmetro `WebOrigin`. |
 | Notificação | `s3:ObjectCreated:Post`, com prefixo `photos/` e sufixo `/original.jpeg`, para a fila SQS. |
+
+### Bucket de mídia e CloudFront
+
+O `MediaBucket` tem acesso público bloqueado, ACLs desabilitadas, criptografia AES256 e uma policy que nega tráfego sem TLS. A policy libera `s3:GetObject` apenas ao serviço `cloudfront.amazonaws.com`, restrito à `MediaDistribution`. A distribuição usa um Origin Access Control (sigv4), HTTP/2 e HTTP/3, redireciona HTTP para HTTPS, aceita `GET` e `HEAD` e usa a política de cache `CachingOptimized`.
+
+O domínio da distribuição chega às funções `studio-api` e `public-api` como `MEDIA_BASE_URL`. Detalhes em [Reprocessamento e mídia](/developers/flows/reprocessing-and-media#mídia-e-cloudfront).
 
 ### Layout das chaves
 
@@ -186,4 +193,3 @@ As saídas incluem a URL da API, o nome da tabela, os ids do User Pool e do App 
 - **Hospedagem do frontend.** O template não cria bucket de site, distribuição nem domínio. O repositório não define como a SPA é publicada.
 - **Ambiente de produção.** O `samconfig.toml` define apenas o ambiente `dev`.
 - **Proteção contra exclusão.** A tabela e o bucket não têm `DeletionPolicy` nem `UpdateReplacePolicy`.
-- **CDN para os derivados.** As miniaturas são servidas por URL assinada do S3.

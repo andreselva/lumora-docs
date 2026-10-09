@@ -43,7 +43,7 @@ Os derivados também são gravados com cache de longa duração e marcados como 
 
 O `README.md` (decisão D6) descreve três buckets, `web`, `originals` e `media`, com os derivados em um bucket próprio atrás de CloudFront. O argumento é que separar originais de mídia impede que um erro de configuração do CDN exponha um original.
 
-O código atual usa **um único bucket**, privado, sem CloudFront. Originais e derivados compartilham o prefixo `photos/`, e a miniatura é servida por URL assinada. A separação em buckets é uma consideração futura registrada em [Limitações](/developers/limitations#considerações-futuras).
+O código atual usa **dois buckets**, `PhotosBucket` para os originais e `MediaBucket` para os derivados. O bucket de mídia é privado e só é lido pela distribuição CloudFront, por Origin Access Control. O bucket `web` não existe no template. Veja [Reprocessamento e mídia](/developers/flows/reprocessing-and-media#mídia-e-cloudfront).
 
 ## Alternativas
 
