@@ -3,7 +3,7 @@ title: "Pedidos"
 description: "Como a seleção do cliente vira um pedido: congelamento, montagem em páginas, cálculo do valor no servidor, cancelamento e a lista do fotógrafo."
 ---
 
-O pedido fecha a seleção do cliente. O valor sai do pacote gravado no evento e do número de fotos selecionadas, nunca de algo enviado pelo cliente. A seleção não cabe numa transação (sem adicionais à venda não há teto), então o pedido nasce em dois passos: uma transação **congela** a seleção, e uma **montagem** copia os itens aos poucos.
+O pedido fecha a seleção do cliente. O valor sai do pacote gravado no evento e do número de fotos selecionadas, nunca de algo enviado pelo cliente. A seleção não cabe numa transação (com adicionais à venda não há teto), então o pedido nasce em dois passos: uma transação **congela** a seleção, e uma **montagem** copia os itens aos poucos.
 
 Este fluxo não inclui pagamento. O pedido para em `PENDING_PAYMENT`, e nenhum código o leva adiante. Veja [Limitações](/developers/limitations).
 
