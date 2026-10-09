@@ -16,7 +16,7 @@ O código-fonte fica no repositório `lumora`, um monorepo pnpm. Esta documenta�
 Quando esta documentação e o código divergirem, o código prevalece. Corrija a página.
 
 <Warning>
-  O `README.md` do repositório `lumora` descreve em parte a arquitetura pretendida, e não só a implementada. Ele cita, por exemplo, três buckets, CloudFront, marca d'água e capacidade provisionada, que não existem no código atual. Esta documentação descreve o estado implementado. As diferenças conhecidas estão em [Limitações e pontos futuros](/developers/limitations#divergências-entre-o-readme-e-o-código).
+  O `README.md` do repositório `lumora` descreve em parte a arquitetura pretendida, e não só a implementada. Ele cita, por exemplo, três buckets, capacidade provisionada no DynamoDB, ambientes `dev` e `prod`, funções de pagamento e segredos no SSM, que não existem no código atual. Esta documentação descreve o estado implementado. As diferenças conhecidas estão em [Limitações e pontos futuros](/developers/limitations#divergências-entre-o-readme-e-o-código).
 </Warning>
 
 ## O que está implementado hoje
@@ -26,25 +26,45 @@ Quando esta documentação e o código divergirem, o código prevalece. Corrija 
 | Cadastro e sessão do fotógrafo (Cognito) | Implementado |
 | Perfil do fotógrafo (`/me`, bootstrap) | Implementado |
 | Eventos: criar, listar, ler, editar | Implementado |
-| Eventos: excluir | Implementado, com limpeza assíncrona de galerias e fotos |
-| Eventos: publicar e arquivar | Presente no domínio e no repositório; sem rota e sem tela |
+| Eventos: publicar | Implementado, com rota e tela |
+| Eventos: arquivar | Presente no domínio e no repositório; sem rota e sem tela |
+| Eventos: excluir | Implementado, com limpeza assíncrona de galerias e fotos e reconciliação |
+| Pacote do evento (valor, fotos incluídas, adicionais) | Implementado; trava depois do primeiro pedido |
+| Link do cliente (geração, validade, substituição) | Implementado |
 | Galerias: criar, listar, ler, renomear | Implementado |
-| Galerias: excluir | Implementado na API; sem tela |
+| Galerias: excluir | Implementado na API, de forma assíncrona; sem tela |
 | Upload de fotos direto para o S3 | Implementado |
-| Processamento assíncrono (thumbnail e preview) | Implementado |
+| Processamento assíncrono (miniatura e preview com marca d'água) | Implementado |
+| Reprocessamento de fotos | Implementado, por foto ou por evento |
 | Acompanhamento do processamento | Implementado, por polling |
-| Exclusão de fotos | Tela implementada; rota ausente na API |
-| Galeria do cliente (`/g/:token`) | Apenas a casca de rotas no frontend |
-| Seleção, pedidos, pagamento, entrega | Não implementado |
+| Exclusão de fotos escolhidas e de todas as fotos de uma galeria | Implementado |
+| Área do cliente (`/g/:token`): sessão, galerias e fotos | Implementado |
+| Seleção de fotos pelo cliente, com teto do pacote | Implementado |
+| Seleção vista pelo fotógrafo e exportação para o Lightroom | Implementado |
+| Pedido: criação pelo cliente (valor calculado no servidor) | Implementado |
+| Pedido: cancelamento pelo cliente | Implementado na API; sem tela |
+| Pedidos: lista do fotógrafo | Implementado, somente leitura |
+| Pagamento, webhook e reconciliação | Não implementado |
+| Download dos originais | Não implementado |
+| Configurações do Studio | Rota sem conteúdo |
 
 ## Por onde começar
 
 <CardGroup cols={2}>
   <Card title="Visão geral" icon="sitemap" href="/developers/architecture/overview">
-    Componentes do sistema e como eles se relacionam.
+    Componentes do sistema e os quatro caminhos dos dados.
   </Card>
   <Card title="Modelo de dados" icon="table" href="/developers/architecture/data-model">
     A tabela única do DynamoDB, suas chaves e padrões de acesso.
+  </Card>
+  <Card title="Criação de pedidos" icon="receipt" href="/developers/flows/order-creation">
+    Congelamento, montagem em etapas e publicação do valor, com os cenários de concorrência.
+  </Card>
+  <Card title="Acesso do cliente" icon="link" href="/developers/flows/public-access">
+    O token do link, o authorizer e a mídia pelo CloudFront.
+  </Card>
+  <Card title="Seleção de fotos" icon="list-check" href="/developers/flows/photo-selection">
+    O contador e a revisão que protegem o teto do pacote.
   </Card>
   <Card title="Upload de fotos" icon="upload" href="/developers/flows/photo-upload">
     Do navegador ao S3, com retomada e idempotência.
@@ -64,18 +84,18 @@ Quando esta documentação e o código divergirem, o código prevalece. Corrija 
 
 | Caminho | Conteúdo |
 | --- | --- |
-| `apps/web` | Frontend React (Vite). Área do fotógrafo em `/app/*`. |
-| `services/api` | Código das três funções Lambda: handlers, casos de uso, domínio e repositórios. |
-| `packages/contracts` | Schemas zod dos contratos HTTP, consumidos pelo frontend. |
-| `packages/domain` | `Money`, `OrderStatus`, `PhotoStatus` e geração de IDs. Hoje não é importado pelo backend nem pelo frontend. |
+| `apps/web` | Frontend React (Vite). Área do fotógrafo em `/app/*` e área do cliente em `/g/:token/*`. |
+| `services/api` | Código das sete funções Lambda: handlers, controllers, casos de uso, domínio e infraestrutura. |
+| `packages/contracts` | Schemas zod dos contratos HTTP, consumidos pelo frontend. O backend mantém uma cópia. |
 | `infra/template.yaml` | Toda a infraestrutura AWS, em AWS SAM. |
 | `infra/layers/sharp` | Layer com o binário nativo do sharp para Lambda arm64. |
-| `scripts` | DynamoDB Local, criação de usuário de teste e testes de paridade e de infraestrutura. |
-| `docs` | Notas internas: design system, guia de integridade, revisões pontuais. |
+| `tests` | Testes de paridade dos contratos, de paridade do cálculo de preço e do template SAM. |
+| `scripts` | DynamoDB Local, criação de usuário de teste e API simulada da área do cliente. |
+| `docs` | Notas internas: design system, guia de integridade, revisões e medições pontuais. |
 
 ## Convenções desta documentação
 
 - Identificadores do código aparecem em inglês e sem tradução, como `PENDING_UPLOAD` e `processingAttemptId`.
-- Caminhos de arquivo são relativos à raiz do repositório `lumora`.
+- Caminhos de arquivo são relativos à raiz do repositório `lumora`. Dentro de `services/api`, os caminhos são relativos a `src`.
 - "Atualmente" e "hoje" marcam comportamento implementado. "Consideração futura" e "planejado" marcam o que ainda não existe.
 - Exemplos de chaves e identificadores são fictícios.
