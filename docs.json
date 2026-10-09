@@ -28,7 +28,8 @@
           {
             "group": "Eventos",
             "pages": [
-              "user/events/manage-events"
+              "user/events/manage-events",
+              "user/events/share-with-clients"
             ]
           },
           {
@@ -42,7 +43,16 @@
             "pages": [
               "user/photos/upload-photos",
               "user/photos/track-processing",
-              "user/photos/upload-problems"
+              "user/photos/upload-problems",
+              "user/photos/delete-photos"
+            ]
+          },
+          {
+            "group": "Clientes e pedidos",
+            "pages": [
+              "user/clients/client-view",
+              "user/clients/client-selection",
+              "user/orders/orders-list"
             ]
           }
         ]

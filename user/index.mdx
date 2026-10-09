@@ -16,7 +16,7 @@ O Lumora é uma plataforma para fotógrafos organizarem as fotos de seus eventos
     Cadastre-se com nome, e-mail e senha e acesse o Lumora Studio.
   </Card>
   <Card title="Gerenciar eventos" icon="calendar-days" href="/user/events/manage-events">
-    Crie eventos, consulte a lista e altere nome e datas.
+    Crie eventos, consulte a lista, altere nome e datas e exclua eventos.
   </Card>
   <Card title="Organizar galerias" icon="folder-open" href="/user/galleries/organize-galleries">
     Separe as fotos de um evento em galerias e renomeie cada uma.
@@ -25,30 +25,56 @@ O Lumora é uma plataforma para fotógrafos organizarem as fotos de seus eventos
     Envie arquivos, pastas inteiras ou arraste as fotos para a galeria.
   </Card>
   <Card title="Acompanhar o processamento" icon="chart-simple" href="/user/photos/track-processing">
-    Veja quantas fotos já ficaram prontas e quantas ainda estão a caminho.
+    Veja quantas fotos já ficaram prontas, quantas estão a caminho e quantas falharam.
   </Card>
   <Card title="Resolver problemas de envio" icon="life-ring" href="/user/photos/upload-problems">
-    Saiba o que fazer quando um envio falha ou é interrompido.
+    Saiba o que fazer quando um envio falha, é interrompido ou uma foto não é processada.
+  </Card>
+  <Card title="Excluir fotos" icon="trash" href="/user/photos/delete-photos">
+    Exclua fotos escolhidas ou todas as fotos de uma galeria.
+  </Card>
+  <Card title="Compartilhar com o cliente" icon="share-nodes" href="/user/events/share-with-clients">
+    Defina o pacote, publique o evento e gere o link do cliente.
+  </Card>
+  <Card title="Ver o que o cliente faz" icon="eye" href="/user/clients/client-view">
+    Entenda a tela que o cliente abre e como ele finaliza o pedido.
+  </Card>
+  <Card title="Ver a seleção do cliente" icon="list-check" href="/user/clients/client-selection">
+    Veja as fotos escolhidas e copie os nomes para filtrar no Lightroom.
+  </Card>
+  <Card title="Acompanhar os pedidos" icon="receipt" href="/user/orders/orders-list">
+    Consulte os pedidos dos seus clientes, com valor e situação.
   </Card>
 </CardGroup>
 
 ## Como o Lumora organiza seu trabalho
 
-O Lumora usa três conceitos:
+O Lumora usa estes conceitos:
 
-- **Evento**: o trabalho fotografado, como um casamento ou uma formatura. Tem nome, data e uma data de expiração.
+- **Evento**: o trabalho fotografado, como um casamento ou uma formatura. Tem nome, data e uma data de expiração. Todo evento começa como rascunho e precisa ser publicado para o cliente abri-lo.
 - **Galeria**: uma divisão dentro do evento, como "Cerimônia" ou "Recepção". Todo evento já nasce com uma galeria chamada **Galeria principal**.
 - **Foto**: cada arquivo enviado para uma galeria.
+- **Pacote**: o combinado com o cliente para o evento: valor, quantas fotos ele inclui e se há venda de fotos adicionais.
+- **Link do cliente**: o endereço que o cliente abre para ver as galerias e escolher as fotos. Não exige conta.
+- **Pedido**: o registro que o Lumora cria quando o cliente finaliza a escolha.
+
+## O caminho de um evento
+
+1. [Crie o evento](/user/events/manage-events) e as [galerias](/user/galleries/organize-galleries).
+2. [Envie as fotos](/user/photos/upload-photos) e [acompanhe o processamento](/user/photos/track-processing).
+3. [Defina o pacote, publique o evento e gere o link](/user/events/share-with-clients).
+4. O cliente [escolhe as fotos e finaliza o pedido](/user/clients/client-view).
+5. Você [vê a seleção](/user/clients/client-selection) e [acompanha os pedidos](/user/orders/orders-list).
 
 ## O que ainda não está disponível
 
-Os itens abaixo aparecem no menu ou em telas do Lumora Studio, mas ainda não funcionam:
+Os itens abaixo ainda não funcionam. Alguns aparecem no menu ou em telas do Lumora Studio:
 
 | Recurso | Situação atual |
 | --- | --- |
-| **Pedidos** | O item existe no menu, mas a página ainda não tem conteúdo. |
 | **Configurações** | O item existe no menu, mas a página ainda não tem conteúdo. |
-| Excluir fotos | A galeria permite marcar fotos para exclusão, mas a exclusão ainda não é concluída. Veja [Problemas no envio](/user/photos/upload-problems#não-consigo-excluir-uma-foto). |
+| Pagamento pelo Lumora | O Lumora registra o pedido e o valor, mas não recebe pagamentos. Um pedido com valor fica em **Aguardando pagamento**. |
+| Baixar as fotos originais | O cliente ainda não consegue baixar os arquivos originais. |
+| Cancelar um pedido | Nem você nem o cliente têm essa ação na tela. |
 | Excluir galerias | Não há essa opção na tela. |
-| Compartilhar a galeria com clientes | Ainda não está disponível. |
-| Vender e entregar fotos | Ainda não está disponível. |
+| Mover fotos entre galerias | Ainda não está disponível. |

@@ -45,13 +45,20 @@ Converta a foto para JPEG ou reduza o tamanho e envie de novo.
 
 ## Fotos com falha
 
-O contador **Com falha** indica fotos cujo arquivo chegou, mas não pôde ser processado. Isso acontece quando o arquivo está corrompido ou não é um JPEG de verdade, mesmo tendo a extensão correta.
+O contador **Com falha** indica fotos cujo arquivo chegou, mas não pôde ser processado. Na grade, a foto mostra o selo **Falhou** ou **Rejeitada**.
+
+Você pode pedir um novo processamento **sem enviar o arquivo de novo**:
+
+- Para uma foto, clique no ícone de reprocessar no canto da miniatura. O Lumora mostra **Reprocessamento solicitado.**
+- Para todas as fotos com falha do evento, clique em **Reprocessar falhas**, na seção **Envio de fotos**.
+
+O contador **Com falha** diminui quando o processamento termina com sucesso. Se a foto falhar de novo, ela continua em **Com falha**.
 
 <Warning>
-  Atualmente não há como reprocessar ou substituir uma foto com falha. Selecionar o mesmo arquivo de novo não resolve: o Lumora o reconhece como **Já na galeria**.
+  Reprocessar usa o mesmo arquivo que já está no Lumora. Se o arquivo está corrompido ou não é um JPEG de verdade (selo **Rejeitada**), o resultado será o mesmo. Nesse caso, gere um novo arquivo JPEG a partir do original, por exemplo exportando de novo no seu programa de edição, e envie esse novo arquivo. Selecionar o mesmo arquivo de novo não resolve: o Lumora o reconhece como **Já na galeria**, e a foto com falha continua contada no evento.
 </Warning>
 
-Para ter a foto na galeria, gere um novo arquivo JPEG a partir do original, por exemplo exportando de novo no seu programa de edição, e envie esse novo arquivo. A foto com falha continua contada no evento.
+Se o Lumora responder **Esta foto ainda está sendo processada. Aguarde o resultado antes de reprocessar.**, espere alguns instantes e tente de novo.
 
 ## O processamento não termina
 
@@ -61,11 +68,7 @@ Atualmente não há uma ação na tela para destravar fotos que permanecem em pr
 
 ## Não consigo excluir uma foto
 
-A galeria tem um botão de lixeira em cada foto, que marca a foto com **Será excluída**, e o botão **Salvar alterações** pede confirmação.
-
-<Warning>
-  A exclusão de fotos ainda não está disponível. Ao confirmar, o Lumora mostra **Não foi possível salvar as alterações** e nenhuma foto é removida. Clique em **Desfazer** em cada foto marcada para limpar a marcação.
-</Warning>
+Veja [Excluir fotos](/user/photos/delete-photos). Se a galeria mostra **Excluindo as fotos desta galeria**, aguarde a exclusão terminar.
 
 ## Não consigo excluir um evento
 
