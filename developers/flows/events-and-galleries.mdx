@@ -3,14 +3,14 @@ title: "Eventos e galerias"
 description: "Criação, edição, listagem e exclusão de eventos e galerias, com as invariantes que as transações protegem."
 ---
 
-A maior parte dos fluxos de eventos e galerias é síncrona e passa pela `studio-api` e pelo DynamoDB. A exclusão de evento é a exceção: ela inicia uma limpeza assíncrona de galerias e fotos, com SQS, workers e reconciliação.
+A maior parte dos fluxos de eventos e galerias é síncrona e passa pela `studio-api` e pelo DynamoDB. As exclusões de evento e de galeria são a exceção: elas iniciam uma limpeza assíncrona de fotos, com SQS e workers. A de evento conta ainda com reconciliação agendada.
 
 ## Invariantes
 
 Duas regras orientam os fluxos de criação e CRUD:
 
 1. **Todo evento tem exatamente uma galeria principal.** Ela nasce com o evento e só sai com ele.
-2. **A galeria principal não é excluída pelo CRUD de galerias.**
+2. **A galeria principal não é excluída pelo CRUD de galerias.** Ela só sai junto com o evento.
 
 As duas são garantidas na própria escrita, por transação e condição, e não por leitura seguida de escrita.
 
@@ -63,17 +63,23 @@ No frontend, `changedEventFields` envia só o que mudou. Em particular, `expires
 
 ## Publicar e arquivar
 
-A entidade `Event` e o `DynamoDbEventRepository` implementam as transições `publish` (`DRAFT` para `PUBLISHED`) e `archive` (`PUBLISHED` para `ARCHIVED`), incluindo o tratamento de repetição como operação sem efeito.
+**Publicar** está implementado de ponta a ponta: `POST /events/{eventId}/publish` e o botão **Publicar evento** no Studio. A transição `DRAFT` para `PUBLISHED` é um único `UpdateItem` condicionado ao estado, e repetir sobre um evento já publicado devolve o estado atual. O detalhe está em [Pacote, publicação e link de acesso](/developers/flows/event-package-and-access-link#publicar-o-evento).
+
+**Arquivar** (`PUBLISHED` para `ARCHIVED`) existe na entidade `Event` e em `DynamoDbEventRepository.archive`, com o tratamento de repetição como operação sem efeito.
 
 <Warning>
-  Essas transições não estão expostas. Não há rota no template, caso de uso nem controle na tela. Atualmente todo evento permanece em `DRAFT`.
+  Arquivar não está exposto. Não há rota no template, caso de uso nem controle na tela. Um evento só chega a `ARCHIVED` se for alterado diretamente no banco.
 </Warning>
+
+## Pacote e link do cliente
+
+O pacote comercial (`PUT /events/{eventId}/package`) e o link de acesso do cliente (`POST /events/{eventId}/access-link`) são atributos do próprio item do evento. Eles têm fluxo próprio, em [Pacote, publicação e link de acesso](/developers/flows/event-package-and-access-link).
 
 ## Excluir um evento
 
 **Entrada:** `POST /events/{eventId}/delete`, com a confirmação literal exigida por `DeleteEventInputSchema`.
 
-A exclusão é definitiva e pode começar mesmo quando o evento ainda possui galerias e fotos. O caminho síncrono da API remove o item ativo do evento, cria um tombstone `EVENT_DELETION` em `DELETING`, lista as galerias e publica uma mensagem `GALLERY` para cada uma. A resposta HTTP não espera a remoção física de todo o conteúdo.
+A exclusão é definitiva e pode começar mesmo quando o evento ainda possui galerias e fotos. O caminho síncrono da API remove, numa transação, o item ativo do evento e o registro do link de acesso, e cria um tombstone `EVENT_DELETION` em `DELETING`. Em seguida lista as galerias e publica uma mensagem `GALLERY` para cada uma. A resposta HTTP não espera a remoção física de todo o conteúdo.
 
 A limpeza posterior é feita por `DeletePhotosGalleryFunction` em páginas de até 250 fotos. Cada página remove objetos do S3 e registros do DynamoDB; quando há continuação, o worker publica a próxima mensagem na mesma fila. Ao terminar uma galeria, ela é removida. A última galeria pode concluir o tombstone do evento em `DELETED`.
 
@@ -93,7 +99,7 @@ O repositório recusa `isDefault: true` nesse caminho. A galeria principal só n
 
 ## Listar e ler galerias
 
-`GET /events/{eventId}/galleries` devolve todas as galerias do evento, sem paginação. O caso de uso lê o evento antes, para distinguir "evento sem galerias" de "evento inexistente".
+`GET /events/{eventId}/galleries` devolve todas as galerias do evento, inclusive as que estão em `DELETING`, sem paginação. O caso de uso lê o evento antes, para distinguir "evento sem galerias" de "evento inexistente".
 
 ## Renomear uma galeria
 
@@ -105,18 +111,27 @@ O nome é o único campo editável. O caso de uso lê a galeria, chama `gallery.
 
 **Entrada:** `DELETE /events/{eventId}/galleries/{galleryId}`.
 
-**Sequência:**
+A exclusão da galeria é **assíncrona**. A resposta 204 confirma que a exclusão foi aceita, não que as fotos já foram removidas.
 
-1. O caso de uso lê a galeria e chama `assertCanBeDeleted`, que recusa a principal.
-2. O repositório executa uma transação que exclui a galeria, condicionada a `isDefault = false`, e decrementa `galleryCount`.
+**Sequência no caminho síncrono:**
 
-A recusa da galeria principal acontece duas vezes: na entidade e na condição da escrita. A segunda protege contra uma corrida entre a leitura e a exclusão.
+1. `DeleteGallery` lê a galeria e chama `assertCanBeDeleted`, que recusa a principal.
+2. `markDeleting` muda o `status` da galeria para `DELETING`, com uma escrita condicionada à existência e ao dono.
+3. O caso de uso publica uma mensagem `GALLERY`, com `galleryDeleting: true`, na fila de exclusão.
 
-**Respostas:** 204 em caso de sucesso, 409 `DEFAULT_GALLERY_NOT_DELETABLE` para a principal, 404 para galeria inexistente.
+**Limpeza assíncrona:** `DeletePhotosGalleryFunction` reivindica a galeria com um lease, remove do S3 e do DynamoDB uma página de até 250 fotos, publica a mensagem da página seguinte e repete. Na última página, `DynamoDbGalleryRepository.delete` executa uma transação que exclui o item da galeria, condicionada a `isDefault = false`, e decrementa `galleryCount` do evento. O mecanismo de páginas, lease e cursor é o mesmo da exclusão de evento, descrito em [Reconciliação da exclusão de eventos](/developers/flows/event-deletion-reconciliation).
 
-<Warning>
-  A exclusão de galeria não verifica nem remove as fotos da galeria. Excluir uma galeria com fotos deixaria os itens `PHOTO#` e `FP#` no DynamoDB e os objetos no S3 sem galeria correspondente. Um comentário em `DeleteGallery.ts` registra que a cascata ainda não existe. Atualmente a tela não oferece essa operação, o que limita a exposição a chamadas diretas à API.
-</Warning>
+A recusa da galeria principal acontece duas vezes: na entidade e na condição da escrita final. A segunda protege contra uma corrida entre a leitura e a exclusão.
+
+**Enquanto a galeria está em `DELETING`:**
+
+- O registro de novas fotos nela é recusado com 409 `GALLERY_DELETING`.
+- A listagem do Studio continua devolvendo a galeria, com `status: DELETING`.
+- O cliente do link não a vê.
+
+**Falha ao publicar a mensagem.** Se a publicação falhar depois de `markDeleting`, a galeria fica em `DELETING` sem mensagem na fila. Repetir o `DELETE` é seguro: `markDeleting` regrava o mesmo estado e a mensagem é publicada de novo. A exclusão de galeria isolada não tem reconciliador agendado; só a exclusão de evento tem.
+
+**Respostas:** 204 quando aceita, 409 `DEFAULT_GALLERY_NOT_DELETABLE` para a principal, 404 para galeria inexistente.
 
 ## Conflitos de transação
 
