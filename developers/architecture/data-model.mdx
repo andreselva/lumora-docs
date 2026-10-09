@@ -215,6 +215,10 @@ As operações abaixo gravam mais de um item e usam `TransactWriteItems`:
 | Registrar foto | fingerprint, foto, `registeredPhotoCount` do evento e verificação da galeria | Um arquivo é registrado uma vez por galeria, e só em galeria existente. |
 | Excluir evento | evento ativo, tombstone `EVENT_DELETION` e token do link, se houver | A remoção visível do evento, o registro da limpeza pendente e o fim do acesso do cliente acontecem atomicamente. |
 | Gerar link do cliente | evento, token novo e token anterior | O evento tem um único link válido, e só com pacote definido. |
+| Selecionar foto | evento, verificação da galeria, verificação da foto e item da seleção | A vaga da seleção só é ocupada se houver teto livre, sem pedido ativo e com o link válido. O contador sobe junto com o item. Veja [Seleção de fotos](/developers/flows/photo-selection). |
+| Desmarcar foto | evento, verificação da galeria e item da seleção | O contador só desce junto com a remoção do item. |
+| Abrir pedido | evento e pedido | Um pedido ativo por evento, com a seleção congelada e o pacote travado. Veja [Pedidos](/developers/flows/orders). |
+| Montar, publicar, descartar e cancelar pedido | pedido, itens copiados e, conforme o caso, evento | Cada página de itens avança o cursor da montagem na mesma escrita que os grava. Descartar e cancelar também liberam `activeOrderId`. |
 
 As transições do processamento, ao contrário, usam um único `UpdateItem` condicional sobre a foto, sem transação e sem tocar no evento.
 
