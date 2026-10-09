@@ -70,7 +70,7 @@ Uma requisição recusada pelo authorizer não chega à Lambda e não aparece no
 
 ### Identidade na Lambda
 
-`auth/getPhotographerId.ts` lê `requestContext.authorizer.jwt.claims.sub`. Se o claim faltar, lança `UnauthenticatedError`, que vira 401.
+`http/getPhotographerId.ts` lê `requestContext.authorizer.jwt.claims.sub`. Se o claim faltar, lança `UnauthenticatedError`, que vira 401.
 
 Esse `sub` é o único identificador de fotógrafo que o backend usa. Ele é passado a cada caso de uso e entra nas chaves do DynamoDB.
 
@@ -81,7 +81,7 @@ O Lumora não tem papéis nem permissões. A regra é uma só: o fotógrafo aces
 A regra é aplicada pelo modelo de dados, não por verificações espalhadas:
 
 - o `sub` nunca vem de path, query, body ou cursor;
-- toda chave de evento, galeria e foto contém o `sub`;
+- toda chave de evento, galeria e foto contém o `sub`. As partições de seleção, pedido e token não o contêm, e o isolamento delas vem de conferências explícitas, descritas em [Modelo de dados](/developers/architecture/data-model#partições-que-não-levam-o-dono);
 - um id de recurso de outro fotógrafo leva a uma chave inexistente, e a resposta é 404.
 
 Responder 404, e não 403, evita revelar que o recurso existe.
@@ -95,7 +95,11 @@ O frontend trata a troca de usuário no mesmo navegador como um risco:
 - as query keys de dados do fotógrafo incluem o `sub`; a consulta de saúde usa `['health']`, sem dados pessoais;
 - `useMe` recusa uma resposta de `/me` cujo `id` seja diferente do `sub` da sessão;
 - `useBootstrapMe` confere o usuário ativo de novo antes de gravar o resultado no cache;
-- o logout cancela as queries, encerra a sessão, limpa o cache e descarta as filas de upload.
+- o logout cancela as queries, encerra a sessão, limpa o cache, descarta as filas de upload e reinicia os acompanhamentos de reprocessamento.
+
+## E o cliente?
+
+A autenticação do cliente é diferente e **independente** da do fotógrafo. Ele não tem conta: a prova de acesso é o token do link, validado por um authorizer próprio (`public-access-authorizer`) e não pelo Cognito. A identidade que chega às rotas do cliente é o contexto desse authorizer, e não o `sub`. O fluxo está em [Acesso do cliente](/developers/flows/public-access).
 
 ## Saída
 
@@ -116,5 +120,5 @@ O frontend trata a troca de usuário no mesmo navegador como um risco:
 
 ## O que não está implementado
 
-- **Acesso do cliente por token de galeria.** O frontend tem a rota `/g/:token` e um contexto para o token, e o CORS da API libera o header `x-gallery-token`. Não há authorizer, rota nem tabela de tokens.
 - **Login social, MFA e recuperação de conta personalizada.** O User Pool usa a configuração básica.
+- **Conta para o cliente.** O cliente não tem conta nem passa pelo Cognito. Ele é autenticado por um token no link, em outro fluxo.

@@ -11,32 +11,45 @@ Esta página explica o papel de cada recurso. Para valores exatos, consulte o te
 
 | Serviço | Recurso | Papel |
 | --- | --- | --- |
-| API Gateway | HTTP API | Entrada HTTP, CORS e validação do JWT. |
+| API Gateway | HTTP API | Entrada HTTP, CORS, validação do JWT do fotógrafo e autenticação do token do cliente. |
 | Lambda | `studio-api` | Rotas do fotógrafo. |
+| Lambda | `public-api` | Rotas do cliente do link. |
+| Lambda | `public-access-authorizer` | Autentica o token do link. |
 | Lambda | `PostConfirmationFunction` | Criação do perfil no cadastro. |
-| Lambda | `ImageProcessorFunction` | Geração de derivados. |
+| Lambda | `ImageProcessorFunction` | Geração de derivados e reprocessamento. |
+| Lambda | `DeletePhotosGalleryFunction` | Exclusão de fotos, galerias e conteúdo de eventos. |
+| Lambda | `EventDeletionReconcilerFunction` | Retomada de exclusões de evento paradas. |
 | Lambda Layer | `SharpLayer` | Binário nativo do sharp para arm64. |
 | Cognito | User Pool e App Client | Identidade e tokens do fotógrafo. |
 | DynamoDB | `lumora-app` | Todos os metadados. |
-| S3 | bucket de fotos | Originais e derivados. |
-| SQS | fila de processamento e DLQ | Desacoplamento e retry do processamento. |
-| SNS | tópico de alarme | Destino do alarme da DLQ. |
-| CloudWatch | log groups e um alarme | Logs das três funções e alarme da DLQ. |
+| S3 | bucket de fotos | Originais. Privado e versionado. |
+| S3 | bucket de mídia | Miniaturas e previews. Privado, lido só pelo CloudFront. |
+| CloudFront | `MediaDistribution` e OAC | Entrega os derivados ao navegador. |
+| SQS | fila de processamento, fila de exclusão e uma DLQ de cada | Desacoplamento e retry. |
+| SNS | tópico de alarme e assinatura por e-mail | Destino dos alarmes das DLQs. |
+| CloudWatch | log groups e dois alarmes | Logs das sete funções e alarmes das DLQs. |
+| EventBridge | regra agendada (criada pelo evento `Schedule` do SAM) | Dispara o reconciliador. |
 | IAM | políticas por função | Permissões mínimas de cada Lambda. |
 
-Serviços que o `README.md` do `lumora` menciona, mas que **não** estão no template: CloudFront, EventBridge Scheduler, SSM Parameter Store, WAF e X-Ray.
+Serviços que o `README.md` do `lumora` menciona, mas que **não** estão no template: EventBridge Scheduler (a agenda usa uma regra do EventBridge), SSM Parameter Store, WAF e X-Ray.
 
 ## Funções Lambda
 
-As três funções compartilham o mesmo código-fonte, `services/api`, e são empacotadas separadamente pelo esbuild, cada uma a partir do seu handler. Todas rodam em Node.js 22 sobre arm64.
+As sete funções compartilham o mesmo código-fonte, `services/api`, e são empacotadas separadamente pelo esbuild, cada uma a partir do seu handler. Todas rodam em Node.js 22 sobre arm64.
 
 | Função | Gatilho | Timeout | Memória |
 | --- | --- | --- | --- |
-| `studio-api` | HTTP API | 10 s | 256 MB |
+| `studio-api` | HTTP API, JWT | 10 s | 256 MB |
+| `public-api` | HTTP API, authorizer do link | 10 s | 256 MB |
+| `public-access-authorizer` | Authorizer do HTTP API | 10 s | 256 MB |
 | `PostConfirmationFunction` | Cognito, `PostConfirmation` | 10 s | 256 MB |
 | `ImageProcessorFunction` | SQS | 60 s | 1536 MB |
+| `DeletePhotosGalleryFunction` | SQS | 60 s | 256 MB |
+| `EventDeletionReconcilerFunction` | Agenda, a cada 15 minutos | 60 s | 256 MB |
 
-O `imageProcessor` tem mais memória e tempo porque decodifica e redimensiona imagens de até 50 MB em memória.
+O `ImageProcessorFunction` tem mais memória e tempo porque decodifica e redimensiona imagens de até 50 MB em memória. A concorrência dos dois consumidores de SQS é limitada a 30 invocações simultâneas.
+
+`DeletePhotosGalleryFunction` declara `RecursiveLoop: Allow`. Ela publica a próxima página na própria fila, o que o Lambda tratará como um laço recursivo por padrão. O laço é intencional e termina quando não há mais páginas.
 
 ### Layer do sharp
 
@@ -52,26 +65,36 @@ Cada função recebe só o que usa:
 
 | Função | DynamoDB | S3 | Outros |
 | --- | --- | --- | --- |
-| `studio-api` | `GetItem`, `PutItem`, `Query`, `UpdateItem`, `DeleteItem`, `ConditionCheckItem` | `PutObject` e `GetObject` em `photos/*`; `ListBucket` restrito ao prefixo `photos/` | nenhum |
+| `studio-api` | `GetItem`, `PutItem`, `Query`, `UpdateItem`, `DeleteItem`, `ConditionCheckItem` e `BatchGetItem` na tabela; só `Query` no `GSI1` | `PutObject` e `GetObject` em `photos/*` do bucket de originais; `ListBucket` restrito ao prefixo `photos/` | `SendMessage` nas duas filas |
+| `public-api` | `GetItem`, `Query`, `PutItem`, `UpdateItem`, `DeleteItem` e `ConditionCheckItem` | nenhum | nenhum |
+| `public-access-authorizer` | `GetItem` | nenhum | nenhum |
 | `PostConfirmationFunction` | `PutItem` | nenhum | nenhum |
-| `ImageProcessorFunction` | `GetItem`, `UpdateItem` | `GetObject`, `GetObjectVersion`, `PutObject` em `photos/*` | leitura da fila |
+| `ImageProcessorFunction` | `GetItem`, `UpdateItem` | `GetObject`, `GetObjectVersion`, `DeleteObject` em `photos/*` do bucket de originais; `PutObject` e `DeleteObject` em `photos/*` do bucket de mídia | leitura da fila de processamento |
+| `DeletePhotosGalleryFunction` | `GetItem`, `Query`, `UpdateItem`, `DeleteItem`, `BatchGetItem` | `DeleteObject` em `photos/*` dos dois buckets | leitura e `SendMessage` na fila de exclusão |
+| `EventDeletionReconcilerFunction` | `Query` e `UpdateItem` na tabela e no `GSI1` | nenhum | `SendMessage` na fila de exclusão |
 
-Duas observações:
+Observações:
 
-- A `studio-api` não lê nem grava bytes de fotos. As permissões de S3 existem para **assinar** as URLs de upload e de leitura, e `ListBucket` serve para verificar se um original já chegou.
-- O `imageProcessor` não tem `Query`, `PutItem` nem `DeleteItem`. Ele só lê e atualiza a foto que está processando.
+- A `studio-api` não lê nem grava bytes de fotos. As permissões de S3 existem para **assinar** as URLs de upload e para verificar se um original já chegou (`ListBucket`). A API entrega a mídia por URLs do CloudFront e não assina leituras.
+- A `public-api` não tem acesso a S3 nem a filas. Ela recebe apenas a base das URLs de mídia (`MEDIA_BASE_URL`). As escritas dela são as da seleção e do pedido.
+- O authorizer só lê. A `public-api` é a única função que escreve pedidos.
+- O `imageProcessor` não tem `Query`, `PutItem` nem `DeleteItem`. Ele só lê e atualiza a foto que está processando. `DeleteObject` serve para descartar o que gravou para uma foto excluída no meio do caminho.
+- `ConditionCheckItem` aparece nas funções que usam `TransactWriteItems`, porque a transação exige a permissão de cada operação que contém.
 
-O teste `scripts/infra-template.test.ts` verifica parte dessas políticas.
+O teste `tests/infra-template.test.ts` verifica várias dessas políticas.
 
 ## API Gateway
 
 A API é uma HTTP API (v2) com estágio `dev`.
 
-- **Autorização.** Um JWT authorizer nativo valida o token contra o User Pool. Ele é o authorizer padrão e exige o scope `aws.cognito.signin.user.admin`. Cada rota protegida declara o authorizer e o scope explicitamente.
+- **Autorizadores.** Dois, e cada rota usa exatamente um:
+  - `CognitoJwtAuthorizer`, nativo, valida o token contra o User Pool e exige o scope `aws.cognito.signin.user.admin`. É o authorizer padrão, e cada rota protegida do Studio o declara explicitamente.
+  - `PublicAccessAuthorizer`, uma Lambda authorizer com resposta simples, lê o header `x-access-token` e guarda a resposta em cache por 60 segundos (`ReauthorizeEvery`). Protege todas as rotas `/public/*`.
 - **Rota pública.** Somente `GET /health` usa `Authorizer: NONE`.
-- **CORS.** A API aceita qualquer origem, com os headers `Content-Type`, `Authorization` e `x-gallery-token`.
+- **Throttling.** `GET /health` aceita 5 requisições por segundo, com rajada de 10. Cada rota `/public/*` aceita 20 por segundo, com rajada de 40. As rotas do Studio ficam nos limites da conta.
+- **CORS.** A API aceita qualquer origem, com os métodos `GET`, `POST`, `PUT`, `PATCH`, `DELETE` e `OPTIONS` e os headers `Content-Type`, `Authorization` e `x-access-token`.
 
-O header `x-gallery-token` está liberado no CORS, mas nenhuma rota o utiliza atualmente.
+O fluxo do authorizer está em [Acesso do cliente](/developers/flows/public-access).
 
 ## Cognito
 
@@ -83,42 +106,69 @@ O gatilho `PostConfirmation` invoca a `PostConfirmationFunction`.
 
 ## DynamoDB
 
-Há uma única tabela, `lumora-app`, em modo sob demanda (`PAY_PER_REQUEST`), com chave `PK` e `SK` e um índice global `GSI1`.
+Há uma única tabela, `lumora-app`, em modo sob demanda (`PAY_PER_REQUEST`), com chave `PK` e `SK` e um índice global `GSI1` com projeção completa.
 
 O nome da tabela é fixo no template. Isso impede duas stacks na mesma conta e região.
 
-<Note>
-  O `GSI1` está declarado, mas nenhum código grava `GSI1PK` ou `GSI1SK` nem consulta o índice. A tabela não tem TTL configurado.
-</Note>
+O `GSI1` tem dois usos: as exclusões de evento pendentes e a lista de pedidos do fotógrafo. A tabela não tem TTL configurado.
 
 O modelo lógico está em [Modelo de dados](/developers/architecture/data-model).
 
-## S3
+## S3 e CloudFront
 
-Há um único bucket, privado, que guarda originais e derivados sob o prefixo `photos/`.
+Há **dois buckets**, ambos privados, com ACLs desabilitadas (`BucketOwnerEnforced`), criptografia SSE-S3 e uma bucket policy que nega acesso sem TLS.
+
+### Bucket de originais (`PhotosBucket`)
+
+Guarda só os originais.
+
+| Configuração | Valor e motivo |
+| --- | --- |
+| Acesso público | Totalmente bloqueado. Nenhuma distribuição o enxerga. |
+| Versionamento | Habilitado. Cada envio cria uma versão imutável, que o processador usa como identidade do original. |
+| Lifecycle | Versões não correntes expiram em 15 dias. Uploads multipart incompletos são abortados em 3 dias. |
+| CORS | Permite `GET` e `POST` a partir da origem do frontend, definida pelo parâmetro `WebOrigin`. |
+| Notificação | `s3:ObjectCreated:Post`, com prefixo `photos/` e sufixo `/original.jpeg`, para a fila de processamento. |
+
+### Bucket de mídia (`MediaBucket`)
+
+Guarda as miniaturas e as previews.
 
 | Configuração | Valor e motivo |
 | --- | --- |
 | Acesso público | Totalmente bloqueado. |
-| ACLs | Desabilitadas (`BucketOwnerEnforced`). |
-| Criptografia | SSE-S3 (AES256) por padrão. |
-| Transporte | Uma bucket policy nega qualquer acesso sem TLS. |
-| Versionamento | Habilitado. Cada envio cria uma versão imutável, que o processador usa como identidade do original. |
-| Lifecycle | Versões não correntes expiram em 15 dias. Uploads multipart incompletos são abortados em 3 dias. |
-| CORS | Permite `GET` e `POST` a partir da origem do frontend, definida pelo parâmetro `WebOrigin`. |
-| Notificação | `s3:ObjectCreated:Post`, com prefixo `photos/` e sufixo `/original.jpeg`, para a fila SQS. |
+| Leitura | Somente a distribuição, por uma bucket policy que restringe `s3:GetObject` ao ARN dela. |
+| Versionamento | Não habilitado. |
+| Notificação | Nenhuma. |
+
+O template registra o motivo da separação: a distribuição só enxerga o bucket de mídia, então nenhum erro de configuração do CDN alcança um original.
+
+### CloudFront (`MediaDistribution`)
+
+Entrega os derivados ao navegador, por HTTPS, com HTTP/2 e HTTP/3. A origem é o bucket de mídia, acessado por Origin Access Control (SigV4). Permite só `GET` e `HEAD`, comprime as respostas e usa a política de cache gerenciada `CachingOptimized`. A classe de preço é `PriceClass_All`, porque os pontos de presença no Brasil só entram na classe completa.
+
+O domínio da distribuição é passado às funções como `MEDIA_BASE_URL` e publicado como saída da stack (`MediaBaseUrl`). As URLs entregues **não são assinadas**. Veja o aviso em [Acesso do cliente](/developers/flows/public-access#entrega-da-mídia).
+
+A distribuição serve apenas a mídia. Ela **não** hospeda o frontend.
 
 ### Layout das chaves
 
+Originais, no bucket de originais:
+
 ```
 photos/{ownerId}/{eventId}/{galleryId}/{photoId}/original.jpeg
+```
+
+Derivados, no bucket de mídia:
+
+```
 photos/{ownerId}/{eventId}/{galleryId}/{photoId}/attempts/{attemptId}/thumb-v1.webp
 photos/{ownerId}/{eventId}/{galleryId}/{photoId}/attempts/{attemptId}/preview-v1.webp
 ```
 
 As chaves são montadas e interpretadas por `S3KeyBuilder`, em `services/api/src/shared/storage`. O `v1` vem da constante `IMAGE_PROCESSING_VERSION`.
 
-O filtro de sufixo da notificação é o que impede um ciclo: os derivados gravados pelo `imageProcessor` terminam em `.webp` e não geram novos eventos.
+A notificação só existe no bucket de originais, e o filtro de sufixo impede qualquer ciclo: os derivados vão para outro bucket.
 
 ### Por que a notificação é só para `Post`
 
@@ -126,42 +176,53 @@ O filtro usa `s3:ObjectCreated:Post`, e não `s3:ObjectCreated:*`. Somente objet
 
 ## SQS
 
+Há duas filas standard, cada uma com sua DLQ e seu alarme.
+
 ```mermaid
 flowchart LR
-  S[(S3)] -- ObjectCreated:Post --> Q[PhotoProcessingQueue]
+  S[(Bucket de originais)] -- ObjectCreated:Post --> Q[PhotoProcessingQueue]
+  API[studio-api] -- REPROCESS_PHOTO --> Q
   Q -- lote de 1 --> I[imageProcessor]
   Q -- após 5 recebimentos --> DLQ[PhotoProcessingDQL]
-  DLQ -- ao menos 1 mensagem visível --> AL[Alarme CloudWatch]
+
+  A2[studio-api e<br/>reconciliador] -- SELECTED e GALLERY --> Q2[DeletePhotosGalleryQueue]
+  Q2 <--> D[DeletePhotosGalleryFunction]
+  Q2 -- após 5 recebimentos --> DLQ2[DeletePhotosGalleryQueueDLQ]
+
+  DLQ -- 1 mensagem visível --> AL[Alarmes CloudWatch]
+  DLQ2 -- 1 mensagem visível --> AL
   AL --> T[Tópico SNS]
+  T --> E[E-mail]
 ```
 
-| Configuração | Valor |
-| --- | --- |
-| Tipo da fila | Standard, com entrega pelo menos uma vez |
-| Visibility timeout | 360 s |
-| Tentativas antes da DLQ | 5 (`maxReceiveCount`) |
-| Retenção da DLQ | 14 dias |
-| Tamanho do lote | 1 mensagem por invocação |
-| Concorrência máxima | 30 invocações simultâneas |
-| Resposta parcial | `ReportBatchItemFailures` habilitado |
+| Configuração | Fila de processamento | Fila de exclusão |
+| --- | --- | --- |
+| Tipo | Standard, entrega pelo menos uma vez | Standard, entrega pelo menos uma vez |
+| Visibility timeout | 360 s | 360 s |
+| Tentativas antes da DLQ | 5 (`maxReceiveCount`) | 5 (`maxReceiveCount`) |
+| Retenção da DLQ | 14 dias | 14 dias |
+| Tamanho do lote | 1 mensagem por invocação | 1 mensagem por invocação |
+| Concorrência máxima | 30 | 30 |
+| Resposta parcial | `ReportBatchItemFailures` | `ReportBatchItemFailures` |
+| Quem publica | S3 (uploads) e `studio-api` (reprocessamento) | `studio-api`, o próprio worker e o reconciliador |
 
-Uma `QueuePolicy` permite que apenas o S3, a partir do bucket de fotos e da própria conta, envie mensagens para a fila.
+Uma `QueuePolicy` permite que apenas o S3, a partir do bucket de originais e da própria conta, envie mensagens para a fila de processamento.
 
-Os três tempos do processamento foram escolhidos em conjunto:
+Os três tempos de cada fila foram escolhidos em conjunto:
 
 ```
-timeout da Lambda (60 s)  <  lease de processamento (90 s)  <  visibility timeout (360 s)
+timeout da Lambda (60 s)  <  lease (90 s)  <  visibility timeout (360 s)
 ```
 
-O motivo dessa ordem está em [Processamento de imagens](/developers/flows/image-processing#os-três-tempos).
+O motivo dessa ordem está em [Processamento de imagens](/developers/flows/image-processing#os-três-tempos). A mesma relação vale para o worker de exclusão.
 
 <Note>
-  O recurso da DLQ se chama `PhotoProcessingDQL` no template, com as letras trocadas. O nome é apenas o identificador lógico do CloudFormation.
+  O recurso da DLQ de processamento se chama `PhotoProcessingDQL` no template, com as letras trocadas. O nome é apenas o identificador lógico do CloudFormation.
 </Note>
 
 ### Dependência circular entre bucket e fila
 
-O bucket precisa da fila para configurar a notificação, e a política da fila precisa restringir o envio ao bucket. Para evitar a referência circular:
+O bucket de originais precisa da fila para configurar a notificação, e a política da fila precisa restringir o envio ao bucket. Para evitar a referência circular:
 
 - o nome do bucket é composto só por pseudoparâmetros: nome da stack, conta e região;
 - a política da fila reconstrói o ARN do bucket com os mesmos pseudoparâmetros, sem referenciar o recurso;
@@ -169,21 +230,27 @@ O bucket precisa da fila para configurar a notificação, e a política da fila 
 
 ## Observabilidade provisionada
 
-- Um log group por função, com retenção de 14 dias.
-- Um alarme que dispara quando há ao menos uma mensagem visível na DLQ, avaliado a cada minuto.
-- Um tópico SNS que recebe o alarme. O template não cria nenhuma assinatura: quem deve ser notificado precisa assinar o tópico.
+- Um log group por função (sete), com retenção de 14 dias.
+- Dois alarmes, um por DLQ, que disparam quando há ao menos uma mensagem visível, avaliados a cada minuto.
+- Um tópico SNS que recebe os alarmes, com uma assinatura por e-mail. O endereço vem do parâmetro `AlarmEmail`. O destinatário precisa confirmar a assinatura do SNS para receber os avisos.
 
-Veja [Observabilidade](/developers/operations/observability).
+Não há dashboard, alarmes de erro das funções nem tracing. Veja [Observabilidade](/developers/operations/observability).
 
 ## Parâmetros e saídas da stack
 
-O template tem um parâmetro, `WebOrigin`, com valor padrão apontando para o servidor de desenvolvimento do Vite. Ele define a origem aceita pelo CORS do bucket.
+| Parâmetro | Função |
+| --- | --- |
+| `WebOrigin` | Origem aceita pelo CORS do bucket de originais. O padrão aponta para o servidor de desenvolvimento do Vite. |
+| `AlarmEmail` | E-mail que recebe os alarmes. **Obrigatório**, sem valor padrão, validado por um padrão de e-mail. |
 
-As saídas incluem a URL da API, o nome da tabela, os ids do User Pool e do App Client, o nome e o ARN do bucket e o ARN do tópico de alarme. O frontend precisa de três delas. Veja [Desenvolvimento local](/developers/operations/local-development#variáveis-do-frontend).
+As saídas são a URL da API, o nome da tabela, os ids do User Pool e do App Client, o nome e o ARN do bucket de originais, o ARN do tópico de alarme e a URL base da mídia. O frontend precisa de três delas. Veja [Desenvolvimento local](/developers/operations/local-development#variáveis-do-frontend).
+
+Duas variáveis de ambiente das funções são valores fixos no template, e não parâmetros: `PUBLIC_APP_URL` da `studio-api`, que é `http://localhost:5173`, e o estágio `dev` da API.
 
 ## O que não está na infraestrutura
 
-- **Hospedagem do frontend.** O template não cria bucket de site, distribuição nem domínio. O repositório não define como a SPA é publicada.
+- **Hospedagem do frontend.** O template não cria bucket de site, distribuição para a SPA nem domínio. O repositório não define como a SPA é publicada.
 - **Ambiente de produção.** O `samconfig.toml` define apenas o ambiente `dev`.
-- **Proteção contra exclusão.** A tabela e o bucket não têm `DeletionPolicy` nem `UpdateReplacePolicy`.
-- **CDN para os derivados.** As miniaturas são servidas por URL assinada do S3.
+- **Proteção contra exclusão.** A tabela e os buckets não têm `DeletionPolicy` nem `UpdateReplacePolicy`.
+- **Restrição de acesso à mídia.** A distribuição não usa URLs assinadas, cookies assinados nem WAF.
+- **Restrição de origem da API.** O CORS da API é aberto.
