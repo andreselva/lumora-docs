@@ -68,7 +68,7 @@ Para cada arquivo, em ordem, o caso de uso `RequestPhotoUploads`:
 | `Put` do fingerprint | não existir | Impede registrar o mesmo arquivo duas vezes na galeria. |
 | `Put` da foto | não existir | Cria o registro. |
 | `Update` do evento, `ADD registeredPhotoCount 1` | evento existir | Mantém o contador de fotos registradas e impede registrar em evento já removido. |
-| `ConditionCheck` da galeria | galeria existir | Impede registrar foto em galeria inexistente ou de outro fotógrafo. |
+| `ConditionCheck` da galeria | galeria existir e não estar em `DELETING` | Impede registrar foto em galeria inexistente, de outro fotógrafo ou em exclusão. |
 
 Os quatro efeitos são atômicos. Se qualquer condição falhar, nada é gravado.
 
@@ -162,6 +162,7 @@ Não há limpeza automática de fotos que ficam em `PENDING_UPLOAD` para sempre.
 | Falha | Resposta |
 | --- | --- |
 | Galeria inexistente ou de outro fotógrafo | 404 |
+| Galeria em exclusão | 409 `GALLERY_DELETING` |
 | Arquivo fora do contrato | 400 `VALIDATION_ERROR`, para o lote inteiro |
 | Conflito de transação persistente | 409 `CONFLICT` |
 
@@ -172,13 +173,14 @@ O lote não é atômico. A API processa os arquivos em sequência, e uma falha n
 - **Um arquivo, uma foto por galeria.** O fingerprint e a transação impedem duplicatas, mesmo com pedidos repetidos ou simultâneos.
 - **O que foi autorizado é o que chega.** Chave, tipo e tamanho são fixados pela policy do POST e conferidos de novo pelo processador.
 - **Nada é dado como pronto pelo cliente.** O estado da foto só avança por evento do S3.
+- **O registro exige uma galeria ativa.** Uma galeria em `DELETING` não recebe fotos novas.
 - **O registro exige que o evento ainda exista.** `registeredPhotoCount` é incrementado na mesma transação; a exclusão definitiva posterior pode remover o evento mesmo com fotos e limpar o conteúdo de forma assíncrona.
 
 ## O que o fluxo não garante
 
 - **Igualdade de conteúdo.** Dois arquivos diferentes com mesmo nome, tamanho e data de modificação são tratados como o mesmo.
 - **Envio único por ticket.** O presigned POST pode ser usado mais de uma vez dentro da validade. Cada uso cria uma nova versão do objeto. O processamento lida com isso fixando a primeira versão. Veja [Processamento de imagens](/developers/flows/image-processing#versão-do-original).
-- **Reenvio de foto com falha.** Uma foto em `FAILED` recebe `upload: null`. Selecionar o mesmo arquivo de novo não a reprocessa.
+- **Reenvio de foto com falha.** Uma foto em `FAILED` recebe `upload: null`. Selecionar o mesmo arquivo de novo não a reprocessa. Para gerar os derivados de novo, o fotógrafo pede o reprocessamento, que usa o original já recebido. Veja [Reprocessamento](/developers/flows/image-processing#reprocessamento).
 
 ## Acompanhamento pelo frontend
 
@@ -200,6 +202,7 @@ A contagem é derivada na hora: a API percorre os itens `PHOTO#` do evento com l
 | Há fotos em `PENDING_UPLOAD` ou `PROCESSING` e os contadores mudaram recentemente | Sim |
 | Não há fotos nesses estados | Não |
 | Os contadores não mudam há tempo demais | Não |
+| Há um pedido de reprocessamento desta sessão ainda sem resultado | Sim |
 
 O limite de estagnação existe porque `PENDING_UPLOAD` também conta fotos de lotes abandonados, cujo original nunca vai chegar. Sem o limite, o polling não terminaria.
 
@@ -208,16 +211,35 @@ O limite depende do que ainda está pendente:
 - **3 minutos** quando há fotos em `PROCESSING`;
 - **1 minuto** quando só restam fotos em `PENDING_UPLOAD`. É uma heurística para lotes abandonados, não uma confirmação de ausência do original. O arquivo pode estar no S3 enquanto a entrega do evento ou a reivindicação está atrasada ou falhando.
 
+### Acompanhamento do reprocessamento
+
+Uma foto reprocessada não passa por `PROCESSING`. Ela continua em `FAILED` ou `AVAILABLE` até o worker concluir. Sem um sinal extra, o resumo não teria motivo para voltar a consultar o servidor depois do pedido.
+
+`reprocessWatch` guarda esse sinal na memória da aba, por fotógrafo e evento. Cada pedido aceito registra o total de `FAILED` esperado ao fim do que foi pedido:
+
+- para uma foto, o total de falhas conhecido no pedido, menos um;
+- para todas as falhas do evento, zero.
+
+Enquanto o total de `FAILED` estiver acima desse número, o hook continua consultando, com o limite de 3 minutos. Quando o total chega ao esperado, ou o limite vence, o acompanhamento termina. No vencimento, o hook faz uma última consulta antes de parar, porque o job pode ter terminado depois da consulta anterior.
+
+Um reprocessamento recusado por conteúdo mantém a foto em `FAILED`. Nesse caso o acompanhamento só termina pelo limite.
+
 Quando a contagem de `AVAILABLE` muda, o hook invalida as listas de fotos do evento, para a grade buscar as novas miniaturas.
 
 ### Listagem e miniaturas
 
-`GET /events/{eventId}/galleries/{galleryId}/photos` devolve 24 fotos por página, em ordem crescente de ULID. Para cada foto, a API gera uma URL assinada de leitura da miniatura, válida por 10 minutos.
+`GET /events/{eventId}/galleries/{galleryId}/photos` devolve 24 fotos por página, em ordem crescente de ULID.
 
-A chave da miniatura depende de `completedAttemptId`, a tentativa que concluiu o processamento.
+O parâmetro opcional `status` filtra a listagem por `PENDING_UPLOAD`, `PROCESSING`, `AVAILABLE`, `FAILED` ou `ARCHIVED`. O filtro é aplicado depois da leitura, então a API lê blocos de até 250 itens, no máximo 4 vezes, até completar a página. Uma página filtrada pode vir com menos de 24 fotos e ainda ter `nextCursor`.
+
+O cursor carrega o filtro. Um cursor emitido para um estado só vale para a listagem desse mesmo estado; com outro filtro, a resposta é 400.
+
+Cada foto traz `thumbnailUrl` e `previewUrl`. As duas são URLs públicas da distribuição CloudFront de mídia, montadas a partir de `MEDIA_BASE_URL`. Elas não são assinadas e não expiram. Veja [Processamento de imagens](/developers/flows/image-processing#onde-os-derivados-ficam).
+
+A chave dos derivados depende de `completedAttemptId`, a tentativa que concluiu o processamento. Uma foto em `FAILED` também traz `failureReason`.
 
 <Note>
-  Atualmente a URL de miniatura é gerada para toda foto, sem verificar o estado nem a existência do derivado. Quando o objeto não existe, o S3 recusa o acesso. Uma foto em `FAILED` pode ter miniatura se a geração da preview falhou depois de a miniatura ser gravada. Veja [Limitações](/developers/limitations#limitações-atuais).
+  Atualmente as URLs são geradas para toda foto, sem verificar o estado nem a existência do derivado. Para uma foto sem `completedAttemptId`, a URL aponta para uma chave sem a pasta da tentativa, que o processador não grava. Quando o objeto não existe, a distribuição responde com erro.
 </Note>
 
 ## Onde olhar no código
@@ -227,8 +249,10 @@ A chave da miniatura depende de `completedAttemptId`, a tentativa que concluiu o
 | Filtro de arquivos | `apps/web/src/studio/galleries/photoFiles.ts` |
 | Fila e agendamento | `apps/web/src/studio/galleries/uploadManager.ts` |
 | Envio ao S3 | `apps/web/src/lib/storageClient.ts` |
-| Polling do resumo | `apps/web/src/studio/hooks/useEventUploadSummary.ts` |
-| Caso de uso de registro | `services/api/src/application/photos/RequestPhotoUploads.ts` |
-| Transação de registro | `services/api/src/repositories/dynamodb/DynamoDbPhotoRepository.ts` |
-| Assinatura do POST | `services/api/src/repositories/s3/S3PhotoStorage.ts` |
+| Polling do resumo | `apps/web/src/studio/events/useEventUploadSummary.ts` |
+| Acompanhamento do reprocessamento | `apps/web/src/studio/events/reprocessWatch.ts` |
+| Caso de uso de registro | `services/api/src/application/photos/commands/RequestPhotoUploads.ts` |
+| Transação de registro e listagem | `services/api/src/infra/dynamodb/DynamoDbPhotoRepository.ts` |
+| Assinatura do POST | `services/api/src/infra/s3/S3PhotoStorage.ts` |
+| Listagem com URLs dos derivados | `services/api/src/application/photos/queries/ListGalleryPhotos.ts` |
 | Chaves do S3 | `services/api/src/shared/storage/S3KeyBuilder.ts` |
