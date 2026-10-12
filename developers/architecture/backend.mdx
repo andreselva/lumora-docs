@@ -77,8 +77,8 @@ Gatilho do Cognito. Cria o perfil do fotógrafo após a confirmação do cadastr
 | Método e rota | Caso de uso |
 | --- | --- |
 | `GET /health` | resposta fixa, pública |
-| `GET /me` | `routes/getMe.ts` |
-| `POST /me/bootstrap` | `routes/bootstrapMe.ts` |
+| `GET /me` | `controllers/getMe.ts` |
+| `POST /me/bootstrap` | `controllers/bootstrapMe.ts` |
 | `GET /events` | `ListEvents` |
 | `POST /events` | `CreateEvent` |
 | `GET /events/{eventId}` | `GetEvent` |
@@ -142,7 +142,7 @@ O isolamento não é completo. Estes pontos fogem do desenho:
 
 - `IPhotoStorage` fica em `src/contracts/photo`, e não em `src/domain`.
 - `Photo.ts` importa `node:crypto` para o fingerprint, e `Event.ts` importa `luxon`.
-- `routes/bootstrapMe.ts` e `handlers/postConfirmation.ts` tratam `ConditionalCheckFailedException` do SDK diretamente, em vez de um erro de domínio.
+- `controllers/bootstrapMe.ts` e `handlers/cognito/postConfirmation.ts` tratam `ConditionalCheckFailedException` do SDK diretamente, em vez de um erro de domínio.
 - As regras de `Event.publish` e `Event.archive` estão duplicadas nas `ConditionExpression` de `DynamoDbEventRepository`. Um comentário no código avisa que uma mudança precisa ser feita nos dois lugares.
 
 A decisão e suas consequências estão no [ADR-004](/developers/adr/004-ports-and-repositories).
