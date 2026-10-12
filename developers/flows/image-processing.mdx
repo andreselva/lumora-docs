@@ -413,7 +413,7 @@ flowchart TD
 
 ### Depois da DLQ
 
-Uma mensagem na DLQ esgotou os recebimentos permitidos sem ser confirmada. Ela pode corresponder a uma foto em `PENDING_UPLOAD` ou `PROCESSING`, ou até falhar antes de identificar uma foto, como no caso de corpo inválido. Consulte a mensagem, os logs e o item persistido antes de decidir a recuperação. A entrada na DLQ não muda o estado da foto nem dispara recuperação automática.
+Uma mensagem na DLQ esgotou os recebimentos permitidos sem ser confirmada. Ela pode corresponder a uma foto em `PENDING_UPLOAD` ou `PROCESSING`. Um evento do S3 sem `versionId` também chega à DLQ sem ter reivindicado a foto. Corpos malformados não chegam: o handler os confirma sem retry. Consulte a mensagem, os logs e o item persistido antes de decidir a recuperação. A entrada na DLQ não muda o estado da foto nem dispara recuperação automática.
 
 A DLQ tem retenção configurada de 14 dias. Na fila standard, a ida à DLQ preserva o timestamp de enfileiramento original, portanto o tempo já passado na fila principal conta nesse prazo. A recuperação é operacional: investigar a causa, verificar a versão do original e fazer o redrive para a fila principal. Veja [Solução de problemas](/developers/operations/troubleshooting#mensagens-na-dlq).
 

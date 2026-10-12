@@ -30,12 +30,11 @@ Os itens estão em quatro grupos:
 
 | Item | Situação |
 | --- | --- |
-| URL de miniatura para fotos sem miniatura | `ListGalleryPhotos` gera URL assinada para toda foto, em qualquer estado. Para fotos sem derivado, a URL aponta para um objeto inexistente. O comentário em `toPhotoDto` indica a intenção de devolver `null` nesses casos. |
-| Fotos em `FAILED` não têm recuperação | Não há reprocessamento. Selecionar o mesmo arquivo devolve `upload: null`, por causa do fingerprint. |
+| URLs de derivados para fotos sem derivados | `ListGalleryPhotos` gera `thumbnailUrl` e `previewUrl` para toda foto, em qualquer estado. Para fotos sem derivado, as URLs apontam para objetos inexistentes. |
+| Fotos em `FAILED` com original inválido | O reprocessamento usa o mesmo original e é recusado de novo. Selecionar o mesmo arquivo devolve `upload: null`, por causa do fingerprint. Não há como substituir o original. |
 | Fotos em `PENDING_UPLOAD` abandonadas | Não há expiração nem limpeza. Elas continuam contando no resumo e em `registeredPhotoCount`. |
 | Mensagens na DLQ | Sem recuperação automática. O redrive depende da correção da causa e da existência da versão do original. A expiração da mensagem não altera o estado da foto. |
 | Derivados órfãos | Tentativas interrompidas deixam arquivos em `attempts/{attemptId}/`. Não há limpeza. |
-| Preview não utilizada | É gerada e gravada, mas nenhuma rota a serve. |
 | Só JPEG | RAW, TIFF, PNG e HEIC são recusados. |
 | Nome do arquivo não exibido | A grade usa "Foto N". O schema reduzido do frontend descarta o campo `name` da resposta. |
 | Estado `ARCHIVED` | Existe no enum e nos contratos. Nenhum código leva uma foto a ele. |
@@ -69,9 +68,8 @@ Veja o [ADR-009](/developers/adr/009-derived-photo-counters).
 | Tabela e bucket sem retenção | Sem `DeletionPolicy` nem `UpdateReplacePolicy`. |
 | Nome fixo da tabela | Impede duas stacks na mesma conta e região. |
 | Alarme sem assinante | O tópico SNS não tem assinatura no template. |
-| Observabilidade mínima | Sem métricas próprias, tracing, dashboard ou alarmes de erro. |
+| Observabilidade mínima | O processador de imagens publica métricas próprias. Não há tracing, dashboard nem alarmes de erro. |
 | CORS da API aberto | Aceita qualquer origem. |
-| Miniaturas sem CDN | Servidas por URL assinada do S3, válida por 10 minutos. |
 
 ### Dívidas técnicas registradas no repositório
 
@@ -123,7 +121,6 @@ Cada arquivo de um lote custa uma transação e uma assinatura, em sequência, d
 Itens que o código ou os documentos do repositório apontam como evolução possível. Não são decisões tomadas.
 
 - **Unificar os contratos.** O `README.md` prevê que o backend passe a importar `@photos/contracts` quando o empacotamento das Lambdas suportar dependências do monorepo.
-- **Separar buckets.** O `README.md` descreve buckets distintos para originais e para mídia, com a mídia atrás de um CDN.
 - **Dividir o template.** O `README.md` sugere nested stacks quando o template passar de cerca de mil linhas.
 - **Controle de versão em edições.** O `README.md` sugere um atributo `version` caso edições concorrentes passem a causar perda de dados.
 - **Limpeza de derivados órfãos.** O `README.md` menciona a limpeza futura de arquivos de tentativas interrompidas.
@@ -136,8 +133,6 @@ O roadmap do `README.md` do repositório `lumora` descreve as fases abaixo. Nenh
 
 | Funcionalidade | Estado no código |
 | --- | --- |
-| Marca d'água na preview | Não implementado. A preview é gerada sem marca. |
-| Entrega de mídia por CDN | Não implementado. |
 | Link temporário de galeria para o cliente | Apenas a rota e o contexto no frontend, e o header liberado no CORS da API. |
 | Seleção de fotos pelo cliente | Não implementado. |
 | Pedidos e preços | Apenas `Money` e `OrderStatus` em `packages/domain`, sem uso. |
@@ -152,10 +147,9 @@ O `README.md` do repositório `lumora` mistura a arquitetura pretendida com a im
 | Assunto | `README.md` | Código atual |
 | --- | --- | --- |
 | Capacidade do DynamoDB | Provisionada, 1 RCU e 1 WCU | Sob demanda |
-| Buckets | Três: `web`, `originals`, `media` | Um, para originais e derivados |
+| Buckets | Três: `web`, `originals`, `media` | Dois: fotos, para originais, e mídia, para derivados. Não há bucket de site. |
 | Layout das chaves no S3 | `originals/...`, `thumbs/...`, `previews/...` | Tudo sob `photos/{ownerId}/{eventId}/{galleryId}/{photoId}/` |
-| CloudFront | Distribui o frontend e a mídia | Ausente |
-| Marca d'água | Preview com marca d'água | Ausente |
+| CloudFront | Distribui o frontend e a mídia | Distribui só a mídia |
 | Funções Lambda | Sete | Três |
 | Onde ficam as regras | `packages/domain` | `services/api/src/domain` e `application` |
 | Ambientes | `dev` e `prod` | Só `dev` |

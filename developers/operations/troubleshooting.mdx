@@ -42,7 +42,7 @@ O conteúdo foi rejeitado. Procure o aviso `Foto rejeitada por conteúdo inváli
 | `unreadable or corrupt JPEG` | O sharp não conseguiu ler o arquivo. |
 | `JPEG cannot be processed safely` | O sharp falhou ao redimensionar, por exemplo por exceder o limite de pixels. |
 
-Não há reprocessamento para fotos em `FAILED`. Uma nova mensagem para a mesma foto é recusada na reivindicação.
+Uma nova mensagem de upload para a mesma foto é recusada na reivindicação. Para gerar os derivados de novo, peça o reprocessamento: o botão da foto ou **Reprocessar falhas** no Studio, ou as rotas descritas em [Reprocessamento](/developers/flows/image-processing#reprocessamento). Se o original for inválido, o reprocessamento é recusado de novo e a foto continua em `FAILED`.
 
 ### Erro `Photo processing transition condition failed`
 
@@ -58,11 +58,11 @@ A mensagem volta para a fila. Na reentrega, a reivindicação é recusada se a f
 
 ### Mensagens na DLQ
 
-O alarme `PhotoProcessingDlqAlarm` dispara com uma mensagem visível na DLQ. Isso não determina o estado da foto. Uma falha anterior à reivindicação pode deixá-la em `PENDING_UPLOAD`; depois de uma reivindicação aplicada, ela pode ficar em `PROCESSING`. Uma mensagem inválida pode nem identificar uma foto.
+O alarme `PhotoProcessingDlqAlarm` dispara com uma mensagem visível na DLQ. Isso não determina o estado da foto. Uma falha anterior à reivindicação pode deixá-la em `PENDING_UPLOAD`; depois de uma reivindicação aplicada, ela pode ficar em `PROCESSING`. Corpos malformados não chegam à DLQ: o handler os confirma sem retry e registra um erro com `stage: 'parse'`.
 
 <Steps>
   <Step title="Identifique a foto">
-    Leia a mensagem na DLQ. Se o corpo for um evento válido do S3, a chave do objeto contém os ids do evento, da galeria e da foto. Consulte o estado persistido. Se o corpo for inválido, procure os logs pelo `messageId`.
+    Leia a mensagem na DLQ. Se o corpo for um evento do S3, a chave do objeto contém os ids do evento, da galeria e da foto. Se for um job `REPROCESS_PHOTO`, os ids estão nos campos da mensagem. Consulte o estado persistido.
   </Step>
   <Step title="Encontre a causa">
     Consulte os logs do `imageProcessor` pelo `photoId`. Veja as [consultas úteis](/developers/operations/observability#consultas-úteis).
@@ -81,11 +81,9 @@ O redrive reinicia a retenção da mensagem, mas não a expiração da versão d
 
 ### Miniaturas quebradas na galeria
 
-A API gera uma URL assinada de miniatura para toda foto listada, sem verificar se o objeto existe. Quando ele não existe, o S3 recusa o acesso e o navegador mostra a imagem como quebrada. Isso afeta fotos pendentes e muitas fotos com falha. Uma foto em `FAILED` pode ter miniatura se a falha ocorreu ao gerar a preview, depois da gravação da miniatura.
+A API gera `thumbnailUrl` para toda foto listada, sem verificar se o objeto existe. O Studio só exibe a miniatura de fotos em `AVAILABLE` ou `ARCHIVED`; as demais aparecem com o selo de estado.
 
-É uma limitação conhecida. Veja [Limitações](/developers/limitations#limitações-atuais).
-
-As URLs valem por 10 minutos. Uma grade aberta por mais tempo pode ter imagens que deixam de carregar até a lista ser buscada de novo.
+Uma miniatura quebrada em foto `AVAILABLE` indica que o objeto não está no bucket de mídia na pasta de `completedAttemptId`, ou que a distribuição CloudFront não consegue lê-lo. Confira o objeto no bucket de mídia e a bucket policy da distribuição. As URLs são públicas e não expiram. Veja [Limitações](/developers/limitations#limitações-atuais).
 
 ## Upload
 
