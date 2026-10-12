@@ -42,7 +42,7 @@ Os registros de falha no processamento trazem ainda:
 | `stage` | A etapa em que a falha ocorreu |
 | `errorName`, `errorMessage`, `stack` | O erro |
 
-Valores de `stage`: `claim`, `getPhoto`, `headOriginal`, `validate`, `getOriginal`, `thumbnail`, `putThumbnail`, `preview`, `putPreview`, `markAvailable`, `markFailed` e `message`.
+Valores de `stage`: `claim`, `getPhoto`, `headOriginal`, `validate`, `getOriginal`, `process`, `putThumbnail`, `putPreview`, `markAvailable`, `markFailed`, `discard` e `message`. Mensagens malformadas registram `stage: 'parse'`. Os logs de cada mensagem também trazem `jobOrigin`, com `S3_UPLOAD` ou `REPROCESS`.
 
 ### Mensagens do `imageProcessor`
 

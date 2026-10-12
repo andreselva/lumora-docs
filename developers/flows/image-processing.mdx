@@ -1,11 +1,13 @@
 ---
 title: "Processamento de imagens"
-description: "Como o imageProcessor consome a fila, gera os derivados e se protege de duplicatas, reentregas e workers atrasados."
+description: "Como o imageProcessor consome a fila, gera os derivados, reprocessa fotos finalizadas e se protege de duplicatas, reentregas e workers atrasados."
 ---
 
 ## Objetivo
 
 Para cada original que chega ao S3: confirmar que ele corresponde ao que foi autorizado, gerar uma miniatura e uma preview e levar a foto a um estado final, `AVAILABLE` ou `FAILED`.
+
+O mesmo processador atende o reprocessamento pedido pelo fotógrafo: gerar de novo os derivados de uma foto que já está em `AVAILABLE` ou `FAILED`. Veja [Reprocessamento](#reprocessamento).
 
 O fluxo precisa produzir o resultado certo mesmo quando a mesma mensagem chega duas vezes, quando um worker morre no meio do trabalho e quando um worker lento termina depois de outro já ter assumido.
 
@@ -53,10 +55,10 @@ sequenceDiagram
 3. **Inspecionar o original** (`headOriginal`). `HeadObject` na versão reivindicada.
 4. **Conferir metadados** (`validate`). Tamanho e `Content-Type` do objeto precisam ser iguais aos do registro.
 5. **Baixar o original** (`getOriginal`). `GetObject` na versão reivindicada, inteiro em memória.
-6. **Validar o conteúdo** (`validate`). O sharp lê os metadados e confirma que o formato é JPEG.
-7. **Gerar e gravar a miniatura** (`thumbnail`, `putThumbnail`).
-8. **Gerar e gravar a preview** (`preview`, `putPreview`).
-9. **Publicar** (`markAvailable`). Leva a foto a `AVAILABLE`.
+6. **Validar e gerar os derivados** (`process`). O sharp lê os metadados, confirma que o formato é JPEG e gera miniatura e preview a partir da mesma imagem normalizada.
+7. **Gravar a miniatura** (`putThumbnail`).
+8. **Gravar a preview** (`putPreview`).
+9. **Publicar** (`markAvailable`). Leva a foto a `AVAILABLE` e grava as dimensões da preview.
 
 A reivindicação vem antes de qualquer acesso ao S3. Mensagens duplicadas ou de versões tardias param no passo 1, sem custo de leitura de objeto.
 
@@ -80,14 +82,21 @@ A configuração relevante:
 
 ### O que o handler faz com cada mensagem
 
+A fila recebe dois tipos de mensagem: o evento do S3, publicado a cada envio, e o job de reprocessamento, publicado pela `studio-api`. `normalizeImageJobMessage`, em `ImageJobNormalizer.ts`, converte os dois em um mesmo formato de job antes do caso de uso. Os logs da mensagem carregam `jobOrigin`, com `S3_UPLOAD` ou `REPROCESS`.
+
 | Conteúdo | Tratamento |
 | --- | --- |
 | Evento de teste do S3 (`s3:TestEvent`) | Ignorado. O S3 envia esse evento ao configurar a notificação. |
+| Corpo que não é JSON ou envelope desconhecido | Registrado como erro, com `stage: 'parse'`, e confirmado sem retry. |
+| Job de reprocessamento com campos inválidos | Registrado como erro, com `stage: 'parse'`, e confirmado sem retry. |
 | Chave fora do padrão `photos/.../original.jpeg` | Registrado como aviso e ignorado. |
 | Evento sem `versionId` | Erro. A mensagem volta para a fila. |
-| Evento válido | Encaminhado ao caso de uso. |
+| Evento do S3 válido | Cada record é encaminhado ao caso de uso, em sequência. |
+| Job de reprocessamento válido | Encaminhado ao caso de uso com `reprocessRequestId`. |
 
-A chave vem codificada no evento do S3. O handler a decodifica antes de interpretá-la.
+Uma mensagem malformada não ganharia nada com nova entrega. Por isso ela é confirmada, e não enviada à DLQ. O log registra o motivo (`INVALID_JSON`, `UNKNOWN_ENVELOPE` ou `INVALID_REPROCESS_JOB`) e o tamanho do corpo, sem o conteúdo.
+
+A chave vem codificada no evento do S3. O normalizador a decodifica antes de interpretá-la.
 
 ## Os campos de controle
 
@@ -99,6 +108,8 @@ O processamento é coordenado por quatro atributos do item da foto no DynamoDB. 
 | `processingAttemptId` | UUID da tentativa que detém o processamento agora. |
 | `processingLeaseUntil` | Instante, em milissegundos, até o qual essa tentativa é a dona. |
 | `completedAttemptId` | UUID da tentativa que concluiu. Indica onde estão os derivados publicados. |
+
+O reprocessamento usa mais dois atributos: `reprocessRequestId`, o último pedido concluído ou recusado, e `reprocessAttemptId`, a tentativa que o tratou. Veja [Reprocessamento](#reprocessamento).
 
 ## Reivindicação
 
@@ -115,7 +126,7 @@ Qualquer outra situação recusa a reivindicação:
 
 | Estado da foto | Resultado |
 | --- | --- |
-| Não existe | Recusada. Um evento órfão não recria a foto. |
+| Não existe | Recusada. Um evento órfão não recria a foto, e o original é removido. Veja [Foto excluída](#foto-excluída). |
 | `PROCESSING`, mesma versão, lease válido | Recusada. Outra tentativa está trabalhando. |
 | `PROCESSING`, outra versão | Recusada, mesmo com lease vencido. |
 | `AVAILABLE` ou `FAILED` | Recusada. O processamento já terminou. |
@@ -170,7 +181,10 @@ Resultado: uma foto é processada a partir de uma única versão, imutável, do 
 
 `markAvailable` e `markFailed` usam o mesmo `UpdateItem` condicional, mudando só o estado de destino.
 
-**O que grava:** o novo `status`, `completedAttemptId` e `updatedAt`. Remove `processingAttemptId` e `processingLeaseUntil`.
+**O que grava:** o novo `status`, `completedAttemptId` e `updatedAt`. Remove `processingAttemptId` e `processingLeaseUntil`. Além disso:
+
+- `markAvailable` grava `previewWidth` e `previewHeight`, as dimensões da preview desta tentativa. A galeria as usa para reservar o espaço da foto antes de baixá-la.
+- `markFailed` grava `failureReason = INVALID_CONTENT`. É o único motivo de falha registrado hoje.
 
 **Quando é aceito:** todas estas condições são verdadeiras:
 
@@ -185,7 +199,55 @@ A condição sobre `processingAttemptId` é o que impede um worker antigo de con
 
 Se a condição falhar, o repositório examina o item devolvido. Se a foto já está no estado de destino, com a mesma versão e com `completedAttemptId` igual ao desta tentativa, a operação já tinha sido aplicada. O retorno é tratado como sucesso.
 
+Se a condição falhar porque a foto não existe mais, o repositório lança `PhotoNotFoundError`. Veja [Foto excluída](#foto-excluída).
+
 Em qualquer outro caso, a conclusão lança erro, e a mensagem volta para a fila.
+
+## Reprocessamento
+
+O fotógrafo pode pedir que o Lumora gere de novo os derivados de uma foto já finalizada. Há duas rotas na `studio-api`:
+
+| Rota | Alcance |
+| --- | --- |
+| `POST /events/{eventId}/galleries/{galleryId}/photos/{photoId}/reprocess` | Uma foto em `AVAILABLE` ou `FAILED`. Foto em outro estado responde 409 `PHOTO_NOT_REPROCESSABLE`. |
+| `POST /events/{eventId}/photos/reprocess-failures` | Todas as fotos em `FAILED` do evento, em todas as galerias. |
+
+As duas respondem 202 com `requested`, o número de jobs publicados. A API não muda o estado nem os derivados da foto. Ela só publica, na mesma fila do processamento, uma mensagem `REPROCESS_PHOTO` com o `sourceVersionId` já fixado e um `requestId` novo. Cada pedido HTTP gera outro `requestId`, então repetir o pedido publica outro job.
+
+No processador, o reprocessamento usa as mesmas etapas de S3 e sharp. Ele difere na reivindicação e na conclusão.
+
+### Reivindicação do reprocessamento
+
+`claimReprocessing` é um `UpdateItem` condicional que grava só `processingAttemptId` e `processingLeaseUntil`. O `status` e o `completedAttemptId` não mudam. A foto continua com os derivados publicados até a nova tentativa concluir.
+
+É aceita quando a foto existe, está em `AVAILABLE` ou `FAILED`, tem o mesmo `sourceVersionId`, não tem lease válido e ainda não registrou este `requestId` em `reprocessRequestId`.
+
+Uma recusa é confirmada sem retry. Ela gera um aviso `Reprocessamento recusado` com o motivo e a métrica `ReprocessRefused`:
+
+| Motivo | Situação |
+| --- | --- |
+| `PHOTO_MISSING` | A foto foi excluída depois do pedido. |
+| `NOT_ELIGIBLE` | A foto não está em `AVAILABLE` nem em `FAILED`. |
+| `VERSION_MISMATCH` | O `sourceVersionId` da mensagem não é o da foto. |
+| `ALREADY_HANDLED` | Este `requestId` já foi concluído ou recusado. |
+| `IN_PROGRESS` | Outra tentativa detém um lease válido. |
+
+### Conclusão do reprocessamento
+
+| Resultado | O que grava |
+| --- | --- |
+| Derivados gerados | `status = AVAILABLE`, o novo `completedAttemptId`, as dimensões da preview, `reprocessRequestId` e `reprocessAttemptId`. Remove `failureReason`, `processingAttemptId` e `processingLeaseUntil`. |
+| Conteúdo inválido | Só `reprocessRequestId` e `reprocessAttemptId`. Remove a tentativa e o lease. A foto mantém o estado e os derivados que já tinha. |
+
+A condição exige a foto em `AVAILABLE` ou `FAILED`, com a mesma tentativa, a mesma versão e lease válido. Uma repetição é reconhecida por `reprocessAttemptId` igual ao desta tentativa.
+
+Assim, uma foto em `FAILED` reprocessada com sucesso passa a `AVAILABLE`. Uma foto em `AVAILABLE` cujo reprocessamento é recusado por conteúdo continua `AVAILABLE`, com os derivados anteriores.
+
+<Note>
+  O reprocessamento lê a versão fixada em `sourceVersionId`. Se essa versão não existir mais no S3, a leitura falha como uma falha transitória, e a mensagem segue para a DLQ depois dos recebimentos permitidos.
+</Note>
+
+No Studio, o polling do resumo de upload considera os pedidos de reprocessamento da sessão. Veja [Upload de fotos](/developers/flows/photo-upload#acompanhamento-pelo-frontend).
 
 ## Cenários
 
@@ -247,6 +309,21 @@ Com o timeout da Lambda menor que o lease, esse cenário não ocorre em operaç�
 
 Vale também para a ordem inversa: a primeira versão a reivindicar vence, seja qual for.
 
+### Foto excluída
+
+A foto pode ser excluída enquanto o original está a caminho ou em processamento. O processador remove o que gravou, porque a exclusão não conhece a tentativa em andamento.
+
+| Momento | Tratamento |
+| --- | --- |
+| A reivindicação não encontra a foto | O upload chegou depois da exclusão. O processador remove o original e retorna sem erro. |
+| A leitura da foto ou a conclusão não encontra a foto | A exclusão aconteceu durante o processamento. O processador remove o original e os derivados desta tentativa, registra um aviso e retorna sem erro. |
+
+Nos dois casos a mensagem é confirmada. Repetir não mudaria o resultado. Se a própria remoção falhar, o erro é propagado e a mensagem volta para a fila.
+
+A remoção do original é um `DeleteObject` sem `VersionId`. Como o bucket de originais é versionado, ela cria um delete marker. As versões anteriores ficam não correntes e expiram pela regra de 15 dias do bucket.
+
+No reprocessamento, uma foto inexistente é só uma recusa (`PHOTO_MISSING`). Nada é removido.
+
 ### Redrive da DLQ
 
 Uma mensagem reprocessada dias depois carrega o mesmo `versionId`. Se a foto ainda está em `PROCESSING` com essa versão e o lease venceu, a reivindicação pode ser aceita. Para concluir o processamento, a versão fixada ainda precisa existir no S3.
@@ -257,19 +334,34 @@ Uma mensagem reprocessada dias depois carrega o mesmo `versionId`. Se a foto ain
 
 ## Derivados
 
-`SharpProcessor`, em `services/api/src/shared/sharp`, gera os dois arquivos.
+`SharpProcessor.processImage`, em `services/api/src/infra/sharp`, gera os dois arquivos. O núcleo recebe só os bytes e a configuração, sem S3, SQS ou DynamoDB.
 
-| Derivado | Dimensão | Ajuste | Formato | Qualidade |
-| --- | --- | --- | --- | --- |
-| Miniatura | 400 × 400 | `cover`: preenche o quadrado, cortando o excedente | WebP | 75 |
-| Preview | até 1920 × 1920 | `inside`: cabe no quadrado, sem cortar | WebP | 80 |
+| Derivado | Dimensão | Ajuste | Formato | Qualidade | Marca d'água |
+| --- | --- | --- | --- | --- | --- |
+| Miniatura | até 600 × 600 | `inside`: cabe no quadrado, sem cortar | WebP | 75 | Não |
+| Preview | até 1920 × 1920 | `inside`: cabe no quadrado, sem cortar | WebP | 80 | Sim |
 
 Características comuns:
 
-- A imagem é rotacionada conforme a orientação EXIF antes do redimensionamento.
-- A saída não carrega os metadados do original. O sharp os descarta por padrão, e o código não pede para mantê-los.
-- `limitInputPixels` de 100 milhões de pixels recusa imagens com dimensões absurdas, uma proteção contra bombas de descompressão.
+- A imagem é rotacionada conforme a orientação EXIF e convertida para sRGB antes do redimensionamento.
+- A saída não carrega os metadados do original, inclusive GPS. O código não pede ao sharp para mantê-los.
+- `limitInputPixels` de 160 milhões de pixels recusa imagens com dimensões absurdas, uma proteção contra bombas de descompressão. O limite cobre médio formato de até cerca de 151 MP.
 - Os objetos são gravados com `Cache-Control: public, max-age=31536000, immutable`.
+
+### Marca d'água
+
+A preview recebe a marca `LUMORA_WATERMARK`, repetida pela imagem inteira em linhas alternadas. Recortar um canto ou o centro não entrega uma preview limpa. O tamanho da marca acompanha o lado menor da preview.
+
+Uma falha ao aplicar a marca lança `InvalidWatermarkError`. Ela não é tratada como defeito da foto: segue o caminho de [falha transitória](#falha-transitória), e não marca a foto como `FAILED`.
+
+### Onde os derivados ficam
+
+Os derivados são gravados em um bucket de mídia separado do bucket de originais. Uma distribuição CloudFront serve esse bucket, com acesso pelo Origin Access Control. A distribuição não alcança o bucket de originais.
+
+A API monta as URLs com `MediaUrlBuilder`, a partir de `MEDIA_BASE_URL`. Hoje miniatura e preview são servidas:
+
+- no Studio, pela listagem de fotos da galeria;
+- na área do cliente, pela listagem pública de fotos.
 
 ### Uma pasta por tentativa
 
@@ -279,9 +371,6 @@ Como o caminho inclui o `attemptId`, duas tentativas nunca gravam no mesmo objet
 
 O sufixo `-v1` no nome dos arquivos vem de `IMAGE_PROCESSING_VERSION`. Ele identifica a versão das regras de geração, e não a tentativa.
 
-<Note>
-  Atualmente apenas a miniatura é servida, pela listagem de fotos da galeria. A preview é gerada e gravada, mas nenhuma rota a expõe. Não há marca d'água.
-</Note>
 
 ## Erros e recuperação
 
@@ -295,17 +384,17 @@ O conteúdo não pode produzir derivados válidos, e repetir não mudaria o resu
 | --- | --- |
 | Tamanho do objeto diferente do registrado | `Photo.assertOriginalMatches` |
 | `Content-Type` do objeto diferente do registrado | `Photo.assertOriginalMatches` |
-| Arquivo ilegível ou corrompido | `SharpProcessor.validateJpeg` |
-| Formato real diferente de JPEG | `SharpProcessor.validateJpeg` |
-| Falha do sharp ao redimensionar | `SharpProcessor.process` |
+| Arquivo ilegível ou corrompido | `SharpProcessor.processImage`, ao ler os metadados |
+| Formato real diferente de JPEG | `SharpProcessor.processImage`, ao ler os metadados |
+| Falha do sharp ao gerar os derivados | `SharpProcessor.processImage` |
 
-**Tratamento:** a foto é marcada como `FAILED` pela tentativa que a detém, o caso de uso registra um aviso e retorna sem erro. A mensagem é confirmada. Não há nova tentativa.
+**Tratamento:** a foto é marcada como `FAILED`, com `failureReason = INVALID_CONTENT`, pela tentativa que a detém. O caso de uso registra um aviso e retorna sem erro. A mensagem é confirmada. Não há nova tentativa. No reprocessamento, a foto mantém o estado anterior. Veja [Conclusão do reprocessamento](#conclusão-do-reprocessamento).
 
 Se a própria gravação de `FAILED` falhar, o erro é propagado e a mensagem volta para a fila.
 
 ### Falha transitória
 
-Qualquer outro erro: falha de rede, throttling, erro do S3 ou do DynamoDB, timeout da função.
+Qualquer outro erro: falha de rede, throttling, erro do S3 ou do DynamoDB, falha da marca d'água, timeout da função.
 
 **Tratamento:** o erro é propagado. Quando consegue responder, o handler inclui a mensagem em `batchItemFailures`. Um timeout da função também deixa a mensagem para nova tentativa, sem resposta parcial.
 
@@ -324,11 +413,25 @@ flowchart TD
 
 ### Depois da DLQ
 
-Uma mensagem na DLQ esgotou os recebimentos permitidos sem ser confirmada. Ela pode corresponder a uma foto em `PENDING_UPLOAD` ou `PROCESSING`, ou até falhar antes de identificar uma foto, como no caso de corpo inválido. Consulte a mensagem, os logs e o item persistido antes de decidir a recuperação. A entrada na DLQ não muda o estado da foto nem dispara recuperação automática.
+Uma mensagem na DLQ esgotou os recebimentos permitidos sem ser confirmada. Ela pode corresponder a uma foto em `PENDING_UPLOAD` ou `PROCESSING`. Um evento do S3 sem `versionId` também chega à DLQ sem ter reivindicado a foto. Corpos malformados não chegam: o handler os confirma sem retry. Consulte a mensagem, os logs e o item persistido antes de decidir a recuperação. A entrada na DLQ não muda o estado da foto nem dispara recuperação automática.
 
 A DLQ tem retenção configurada de 14 dias. Na fila standard, a ida à DLQ preserva o timestamp de enfileiramento original, portanto o tempo já passado na fila principal conta nesse prazo. A recuperação é operacional: investigar a causa, verificar a versão do original e fazer o redrive para a fila principal. Veja [Solução de problemas](/developers/operations/troubleshooting#mensagens-na-dlq).
 
 No frontend, o polling desiste após 3 minutos sem mudança e mostra que há fotos ainda em processamento.
+
+## Métricas
+
+O caso de uso publica métricas no namespace `Lumora`, com a dimensão `service = image-processor`. Ids de foto, evento e galeria ficam só nos logs.
+
+| Métrica | Quando |
+| --- | --- |
+| `PhotoProcessed` | Derivados publicados. |
+| `PhotoRejected` | Conteúdo inválido. |
+| `PhotoFailed` | Erro propagado, que devolve a mensagem para a fila. |
+| `ProcessingDurationMs` | Junto com qualquer uma das três acima. |
+| `ReprocessRefused` | Reivindicação de reprocessamento recusada. |
+
+Uma reivindicação de upload recusada e uma foto excluída durante o processamento não geram métrica.
 
 ## Garantias
 
@@ -336,6 +439,7 @@ No frontend, o polling desiste após 3 minutos sem mudança e mostra que há fot
 - **No máximo um dono por vez.** Enquanto o lease vale, nenhuma outra tentativa assume.
 - **Só o dono conclui.** Uma tentativa que perdeu a posse não altera o estado da foto.
 - **Derivados publicados são consistentes.** Miniatura e preview servidas vêm da mesma tentativa, a que concluiu.
+- **Reprocessar não tira a foto do ar.** Os derivados publicados continuam servidos até outra tentativa concluir.
 - **`AVAILABLE` só depois dos arquivos.** A foto só muda de estado depois que os dois derivados foram gravados.
 - **Repetição segura.** Reivindicação e conclusão reconhecem a própria repetição.
 - **O evento não é tocado.** O processador não escreve no item do evento. Não há contador de progresso a manter em sincronia.
@@ -344,9 +448,12 @@ No frontend, o polling desiste após 3 minutos sem mudança e mostra que há fot
 
 | Assunto | Caminho |
 | --- | --- |
-| Consumo da fila | `services/api/src/handlers/imageProcessor.ts` |
-| Orquestração e classificação de falhas | `services/api/src/application/photos/ProcessUploadedPhoto.ts` |
-| Reivindicação e conclusão | `services/api/src/repositories/dynamodb/DynamoDbPhotoRepository.ts` |
-| Geração de derivados | `services/api/src/shared/sharp/SharpProcessor.ts` |
-| Leitura por versão e gravação | `services/api/src/repositories/s3/S3PhotoStorage.ts` |
+| Consumo da fila | `services/api/src/handlers/sqs/imageProcessor.ts` |
+| Normalização das mensagens | `services/api/src/controllers/ImageJobNormalizer.ts` |
+| Orquestração e classificação de falhas | `services/api/src/application/photos/commands/ProcessUploadedPhoto.ts` |
+| Pedido de reprocessamento | `services/api/src/application/photos/commands/RequestPhotoReprocessing.ts` |
+| Reivindicação e conclusão | `services/api/src/infra/dynamodb/DynamoDbPhotoRepository.ts` |
+| Geração de derivados e marca d'água | `services/api/src/infra/sharp/SharpProcessor.ts` |
+| Leitura por versão e gravação | `services/api/src/infra/s3/S3PhotoStorage.ts` |
+| Métricas | `services/api/src/shared/metrics.ts` |
 | Testes de concorrência | `DynamoDbPhotoRepository.dynamodb.spec.ts`, no mesmo diretório do repositório |

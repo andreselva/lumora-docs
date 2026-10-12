@@ -36,7 +36,7 @@ apps/web/src
 `App.tsx` declara duas áreas, cada uma carregada com `lazy`:
 
 - `/app/*`: o Lumora Studio, área do fotógrafo. A raiz `/` redireciona para `/app`.
-- `/g/:token/*`: a galeria do cliente. Atualmente existe apenas o layout e o contexto que guarda o token; não há páginas nem chamadas à API.
+- `/g/:token/*`: a área do cliente. Ela lê o token da URL e chama as rotas `/public/*` da API com o header `x-access-token`.
 
 ### Rotas do Studio
 

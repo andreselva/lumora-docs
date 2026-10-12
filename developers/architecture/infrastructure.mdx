@@ -95,7 +95,9 @@ O modelo lógico está em [Modelo de dados](/developers/architecture/data-model)
 
 ## S3
 
-Há um único bucket, privado, que guarda originais e derivados sob o prefixo `photos/`.
+Há dois buckets privados. O bucket de fotos guarda os originais sob o prefixo `photos/`. O bucket de mídia guarda os derivados, com o mesmo prefixo, e é lido só pela distribuição CloudFront de mídia, pelo Origin Access Control. A distribuição não alcança o bucket de originais.
+
+A tabela descreve o bucket de fotos. O bucket de mídia tem o mesmo bloqueio de acesso público, as ACLs desabilitadas, SSE-S3 e a negação de acesso sem TLS. Ele não tem versionamento, lifecycle, CORS nem notificação.
 
 | Configuração | Valor e motivo |
 | --- | --- |
@@ -111,14 +113,17 @@ Há um único bucket, privado, que guarda originais e derivados sob o prefixo `p
 ### Layout das chaves
 
 ```
+# bucket de fotos
 photos/{ownerId}/{eventId}/{galleryId}/{photoId}/original.jpeg
+
+# bucket de mídia
 photos/{ownerId}/{eventId}/{galleryId}/{photoId}/attempts/{attemptId}/thumb-v1.webp
 photos/{ownerId}/{eventId}/{galleryId}/{photoId}/attempts/{attemptId}/preview-v1.webp
 ```
 
 As chaves são montadas e interpretadas por `S3KeyBuilder`, em `services/api/src/shared/storage`. O `v1` vem da constante `IMAGE_PROCESSING_VERSION`.
 
-O filtro de sufixo da notificação é o que impede um ciclo: os derivados gravados pelo `imageProcessor` terminam em `.webp` e não geram novos eventos.
+Os derivados são gravados no bucket de mídia, que não tem notificação. Por isso eles não geram novos eventos de processamento.
 
 ### Por que a notificação é só para `Post`
 
@@ -186,4 +191,3 @@ As saídas incluem a URL da API, o nome da tabela, os ids do User Pool e do App 
 - **Hospedagem do frontend.** O template não cria bucket de site, distribuição nem domínio. O repositório não define como a SPA é publicada.
 - **Ambiente de produção.** O `samconfig.toml` define apenas o ambiente `dev`.
 - **Proteção contra exclusão.** A tabela e o bucket não têm `DeletionPolicy` nem `UpdateReplacePolicy`.
-- **CDN para os derivados.** As miniaturas são servidas por URL assinada do S3.
