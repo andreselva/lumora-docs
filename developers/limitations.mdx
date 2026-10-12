@@ -132,16 +132,16 @@ Itens que o código ou os documentos do repositório apontam como evolução pos
 
 ## Funcionalidades planejadas
 
-O roadmap do `README.md` do repositório `lumora` descreve as fases abaixo. Nenhuma tem implementação no código atual, além do que está indicado.
+O roadmap do `README.md` do repositório `lumora` descreve as fases abaixo. A tabela indica o que existe hoje no código.
 
 | Funcionalidade | Estado no código |
 | --- | --- |
 | Marca d'água na preview | Não implementado. A preview é gerada sem marca. |
 | Entrega de mídia por CDN | Não implementado. |
-| Link temporário de galeria para o cliente | Apenas a rota e o contexto no frontend, e o header liberado no CORS da API. |
-| Seleção de fotos pelo cliente | Não implementado. |
-| Pedidos e preços | Apenas `Money` e `OrderStatus` em `packages/domain`, sem uso. |
-| Pagamento, webhook e reconciliação | Não implementado. |
+| Link temporário do evento para o cliente | Implementado. Veja [Eventos e galerias](/developers/flows/events-and-galleries#link-do-cliente). |
+| Seleção de fotos pelo cliente | Implementado, com o teto do pacote do evento. Ainda não há página de fluxo para a seleção. |
+| Pedidos e preços | Implementado: pacote do evento, criação e cancelamento do pedido pelo cliente e lista de pedidos no Studio. Ainda não há página de fluxo para os pedidos. |
+| Pagamento, webhook e reconciliação | Não implementado. Um pedido com valor fica em `PENDING_PAYMENT`; só um pedido de valor zero é confirmado, sem gateway. |
 | Download dos originais | Não implementado. |
 | Arquivamento e classes de armazenamento | Não implementado. |
 

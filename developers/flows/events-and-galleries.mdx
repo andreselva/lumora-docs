@@ -1,9 +1,9 @@
 ---
 title: "Eventos e galerias"
-description: "Criação, edição, listagem e exclusão de eventos e galerias, com as invariantes que as transações protegem."
+description: "Criação, edição, publicação, pacote, link do cliente, listagem e exclusão de eventos e galerias, com as invariantes que as transações protegem."
 ---
 
-A maior parte dos fluxos de eventos e galerias é síncrona e passa pela `studio-api` e pelo DynamoDB. A exclusão de evento é a exceção: ela inicia uma limpeza assíncrona de galerias e fotos, com SQS, workers e reconciliação.
+A maior parte dos fluxos de eventos e galerias é síncrona e passa pela `studio-api` e pelo DynamoDB. As exclusões de evento e de galeria são a exceção: elas iniciam uma limpeza assíncrona de fotos, com SQS e workers.
 
 ## Invariantes
 
@@ -61,13 +61,71 @@ As duas rotas leem só o item do evento. Elas não consultam as fotos, e a respo
 
 No frontend, `changedEventFields` envia só o que mudou. Em particular, `expiresAt` não é reenviado quando o dia não mudou, para não reescrever um horário gravado em outro fuso.
 
-## Publicar e arquivar
+## Publicar um evento
 
-A entidade `Event` e o `DynamoDbEventRepository` implementam as transições `publish` (`DRAFT` para `PUBLISHED`) e `archive` (`PUBLISHED` para `ARCHIVED`), incluindo o tratamento de repetição como operação sem efeito.
+**Entrada:** `POST /events/{eventId}/publish`, sem corpo.
 
-<Warning>
-  Essas transições não estão expostas. Não há rota no template, caso de uso nem controle na tela. Atualmente todo evento permanece em `DRAFT`.
-</Warning>
+**Sequência:** `PublishEvent` chama `DynamoDbEventRepository.publish`, um `UpdateItem` que grava `status = PUBLISHED`, condicionado ao evento existir e estar em `DRAFT`.
+
+**Respostas:**
+
+| Situação | Resposta |
+| --- | --- |
+| Evento em `DRAFT` | 200 com o evento já publicado. |
+| Evento já em `PUBLISHED` | 200 com o estado atual. A repetição é tratada como operação sem efeito. |
+| Evento em `ARCHIVED` | 409 `EVENT_NOT_PUBLISHABLE`. |
+| Evento inexistente ou de outro fotógrafo | 404. |
+
+A publicação não tem volta para rascunho. No Studio, o botão de publicar aparece só para eventos em `DRAFT` e abre um diálogo de confirmação.
+
+Publicar é o que abre o evento ao cliente: o acesso pelo link exige o evento em `PUBLISHED`. Veja [Link do cliente](#link-do-cliente).
+
+<Note>
+  A transição `archive` (`PUBLISHED` para `ARCHIVED`) existe na entidade e no repositório, mas não está exposta. Não há rota nem controle na tela para arquivar.
+</Note>
+
+## Definir o pacote do evento
+
+O pacote é o combinado comercial do evento, único para todas as galerias. A seleção e o pedido do cliente usam esses valores.
+
+**Entrada:** `PUT /events/{eventId}/package`, com o pacote inteiro:
+
+| Campo | Regra |
+| --- | --- |
+| `priceCents` | Inteiro de 1 a 10.000.000. |
+| `includedPhotos` | Inteiro de 1 a 10.000. |
+| `extraPhotoPriceCents` | Inteiro de 1 a 10.000.000, ou `null` quando não se vendem fotos além das incluídas. |
+| `billing` | `OUTSIDE`, quando o fotógrafo já recebeu o pacote por fora, ou `PLATFORM`, quando o pedido cobra o pacote. |
+
+**Sequência:** `SetEventPackage` valida o pacote na entidade e grava com um `UpdateItem` que substitui o atributo `package` inteiro. Repetir a chamada dá o mesmo resultado.
+
+**Garantia:** o pacote não muda depois do primeiro pedido. A escrita é condicionada a `orderCount = 0`. Com pedido, a resposta é 409 `EVENT_PACKAGE_LOCKED`.
+
+O evento devolvido pelas rotas traz `package`, ou `null` enquanto o fotógrafo não o definiu, e `orderCount`.
+
+## Link do cliente
+
+O evento tem um único link de acesso do cliente. Ele vale para todas as galerias do evento.
+
+**Entrada:** `POST /events/{eventId}/access-link`, com `validityDays`, de 1 a 5.
+
+**Sequência:**
+
+1. `CreateEventAccessLink` gera um token aleatório e calcula o seu hash.
+2. O repositório lê o evento. Sem pacote, a resposta é 409 `EVENT_PACKAGE_REQUIRED`.
+3. Uma transação grava o hash e as datas do link no evento, cria o item do token e, se havia um link anterior, apaga o item do token antigo.
+4. A resposta é 201 com `link`, montado a partir de `PUBLIC_APP_URL` no formato `/g/{token}`.
+
+**Garantias:**
+
+- **Um único link por evento.** A escrita no evento é condicionada ao hash lido no passo 2. Se outro link foi gerado entre a leitura e a escrita, a transação é cancelada.
+- **Gerar de novo substitui.** O link anterior deixa de valer na mesma transação.
+- **O token não fica guardado.** O banco guarda só o hash. O token em claro existe apenas nessa resposta e não pode ser recuperado depois.
+- **O cliente nunca abre uma galeria sem preço.** A condição da escrita também exige o pacote.
+
+O evento devolvido pelas rotas traz `accessLink`, com `createdAt`, `expiresAt` e `revokedAt`, ou `null` enquanto nenhum link foi gerado. Ele nunca traz o token nem o hash.
+
+Gerar o link não publica o evento. Um link de evento em `DRAFT` não dá acesso. Como o cliente usa o link está em [Autenticação](/developers/flows/authentication#acesso-do-cliente-pelo-link).
 
 ## Excluir um evento
 
@@ -95,6 +153,10 @@ O repositório recusa `isDefault: true` nesse caminho. A galeria principal só n
 
 `GET /events/{eventId}/galleries` devolve todas as galerias do evento, sem paginação. O caso de uso lê o evento antes, para distinguir "evento sem galerias" de "evento inexistente".
 
+`GET /events/{eventId}/galleries/{galleryId}` devolve uma galeria.
+
+As duas rotas incluem galerias em exclusão. Cada galeria traz `status`, com `ACTIVE` ou `DELETING`.
+
 ## Renomear uma galeria
 
 **Entrada:** `PATCH /events/{eventId}/galleries/{galleryId}`, com `name`.
@@ -105,17 +167,28 @@ O nome é o único campo editável. O caso de uso lê a galeria, chama `gallery.
 
 **Entrada:** `DELETE /events/{eventId}/galleries/{galleryId}`.
 
-**Sequência:**
+A exclusão remove a galeria e as suas fotos. Ela é assíncrona: a resposta não espera a remoção das fotos.
+
+**Sequência na API:**
 
 1. O caso de uso lê a galeria e chama `assertCanBeDeleted`, que recusa a principal.
-2. O repositório executa uma transação que exclui a galeria, condicionada a `isDefault = false`, e decrementa `galleryCount`.
+2. `markDeleting` grava `status = DELETING` na galeria. Repetir o pedido regrava o mesmo estado.
+3. O caso de uso publica uma mensagem `GALLERY`, com `galleryDeleting: true`, na fila de exclusão de fotos.
 
-A recusa da galeria principal acontece duas vezes: na entidade e na condição da escrita. A segunda protege contra uma corrida entre a leitura e a exclusão.
+**Sequência no worker:** `DeletePhotosGalleryFunction` remove as fotos em páginas de até 250, como na exclusão de evento. Depois da última página, uma transação exclui a galeria, condicionada a `isDefault = false`, e decrementa `galleryCount`.
 
-**Respostas:** 204 em caso de sucesso, 409 `DEFAULT_GALLERY_NOT_DELETABLE` para a principal, 404 para galeria inexistente.
+A recusa da galeria principal acontece duas vezes: na entidade e na condição da escrita final. A segunda protege contra uma corrida entre a leitura e a exclusão.
+
+Enquanto a galeria está em `DELETING`, o registro de fotos novas nela é recusado com 409 `GALLERY_DELETING`. Veja [Upload de fotos](/developers/flows/photo-upload#a-transação-de-registro).
+
+**Respostas:** 204 quando a exclusão é aceita, 409 `DEFAULT_GALLERY_NOT_DELETABLE` para a principal, 404 para galeria inexistente.
+
+<Note>
+  Atualmente a tela do Studio não oferece a exclusão de galeria. A rota é usada só por chamadas diretas à API.
+</Note>
 
 <Warning>
-  A exclusão de galeria não verifica nem remove as fotos da galeria. Excluir uma galeria com fotos deixaria os itens `PHOTO#` e `FP#` no DynamoDB e os objetos no S3 sem galeria correspondente. Um comentário em `DeleteGallery.ts` registra que a cascata ainda não existe. Atualmente a tela não oferece essa operação, o que limita a exposição a chamadas diretas à API.
+  O reconciliador de exclusões não cobre a exclusão isolada de galeria. Se a mensagem esgotar os recebimentos e for para a DLQ, a galeria fica em `DELETING` até um redrive. Veja [Reconciliação da exclusão de eventos](/developers/flows/event-deletion-reconciliation#o-que-o-reconciliador-não-cobre).
 </Warning>
 
 ## Conflitos de transação
