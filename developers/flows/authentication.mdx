@@ -1,11 +1,16 @@
 ---
 title: "Autenticação"
-description: "Como o fotógrafo entra, como o token chega à API e de onde vem a identidade usada em cada operação."
+description: "Como o fotógrafo entra, como o cliente acessa pelo link do evento, como cada token chega à API e de onde vem a identidade usada em cada operação."
 ---
 
 ## Objetivo
 
-Identificar o fotógrafo em cada requisição e garantir que ele só alcance os próprios dados.
+Identificar quem faz cada requisição e garantir que só alcance os dados a que tem direito.
+
+A API tem dois públicos, com mecanismos separados:
+
+- o **fotógrafo**, no Lumora Studio, autenticado pelo Cognito;
+- o **cliente**, na área pública, identificado pelo token do link do evento. Veja [Acesso do cliente pelo link](#acesso-do-cliente-pelo-link).
 
 ## Componentes
 
@@ -70,7 +75,7 @@ Uma requisição recusada pelo authorizer não chega à Lambda e não aparece no
 
 ### Identidade na Lambda
 
-`auth/getPhotographerId.ts` lê `requestContext.authorizer.jwt.claims.sub`. Se o claim faltar, lança `UnauthenticatedError`, que vira 401.
+`http/getPhotographerId.ts` lê `requestContext.authorizer.jwt.claims.sub`. Se o claim faltar, lança `UnauthenticatedError`, que vira 401.
 
 Esse `sub` é o único identificador de fotógrafo que o backend usa. Ele é passado a cada caso de uso e entra nas chaves do DynamoDB.
 
@@ -114,7 +119,89 @@ O frontend trata a troca de usuário no mesmo navegador como um risco:
   Os dois primeiros status são o comportamento padrão do JWT authorizer do API Gateway. O código do Lumora não os define nem os testa.
 </Note>
 
+## Acesso do cliente pelo link
+
+O cliente não tem conta. Ele recebe do fotógrafo um link no formato `/g/{token}`. O link vale para o evento inteiro e alcança todas as suas galerias. A geração do link está em [Eventos e galerias](/developers/flows/events-and-galleries#link-do-cliente).
+
+### Componentes
+
+| Componente | Papel |
+| --- | --- |
+| `PublicLayout`, no navegador | Lê o token da URL e cria o cliente da API pública. |
+| `public-access-authorizer` | Lambda authorizer do API Gateway. Autentica o token antes de invocar a `public-api`. |
+| `public-api` | Lambda das rotas `/public/*`. Confere o direito de cada operação. |
+| Item do token no DynamoDB | Guarda o hash do token, o fotógrafo, o evento e a validade. |
+
+### Sequência
+
+```mermaid
+sequenceDiagram
+  participant B as Navegador
+  participant G as API Gateway
+  participant Z as public-access-authorizer
+  participant P as public-api
+  participant D as DynamoDB
+
+  B->>G: x-access-token: token do link
+  G->>Z: header (sem cache válido)
+  Z->>Z: confere o formato
+  Z->>D: lê o item pelo hash
+  alt token malformado ou desconhecido
+    Z-->>G: isAuthorized false
+    G-->>B: recusa, sem invocar a public-api
+  else token conhecido
+    Z-->>G: isAuthorized true, com pgId, eventId e tokenHash
+    G->>P: evento com o contexto do authorizer
+    P->>D: lê o evento e a galeria
+    P->>P: canAccessEvent e canView
+    P-->>B: resposta
+  end
+```
+
+### No navegador
+
+A rota `/g/:token/*` não passa pelo `Authenticator` do Studio. `createPublicApi` envia o token no header `x-access-token` em toda chamada.
+
+O token fica só na memória do cliente da API. Ele não vai para `localStorage`, `sessionStorage` nem cookie. Recarregar a página parte de novo do token que está na URL. Antes de chamar a API, o frontend descarta o que claramente não tem o formato de um token.
+
+### No authorizer
+
+O authorizer só autentica. Ele confere o formato do token, 43 caracteres base64url, calcula o SHA-256 e busca o item do token por esse hash. Token malformado e token desconhecido recebem a mesma recusa, para não revelar qual foi o caso.
+
+Com o token reconhecido, o authorizer injeta no contexto `pgId`, `eventId` e `tokenHash`. O token nunca é registrado em log.
+
+O API Gateway guarda a resposta do authorizer em cache por 60 segundos, por valor do header. Como a resposta em cache vale para todas as rotas, o authorizer não confere prazo nem revogação. Uma falha de infraestrutura no authorizer é propagada: o gateway responde 500 e não guarda a negação em cache.
+
+### Na public-api
+
+Dono e evento vêm só do contexto do authorizer. Nenhuma rota pública os aceita do path, da query ou do corpo. `getPublicAccess` valida o contexto e lança `UnauthenticatedError` se faltar algum campo.
+
+Cada operação confere o próprio direito, lendo o evento a cada requisição. `canAccessEvent` exige:
+
+- o evento em `PUBLISHED`;
+- o hash apresentado igual ao link registrado no evento;
+- o instante atual antes de `expiresAt` do link e, se houver, antes de `revokedAt`.
+
+Como a validade é lida do evento, um link substituído ou revogado deixa de valer na requisição seguinte, mesmo com a resposta do authorizer em cache. `event.expiresAt` não entra nessa regra.
+
+Para ver uma galeria, `canView` exige também que ela seja do evento e esteja em `ACTIVE`. Uma galeria de outro evento não é encontrada, porque a leitura usa a partição do evento do token.
+
+### Falhas do cliente
+
+| Situação | Resultado |
+| --- | --- |
+| Header `x-access-token` ausente | Recusa do API Gateway |
+| Token malformado ou desconhecido | Recusa do API Gateway, sem invocar a `public-api` |
+| Contexto do authorizer incompleto | 401 `UNAUTHENTICATED` |
+| Link vencido, revogado ou substituído, ou evento fora de `PUBLISHED` | 403 `ACCESS_DENIED`, com a mesma mensagem para todos os casos |
+| Galeria de outro evento, inexistente ou em exclusão | 404 `NOT_FOUND` |
+
+<Note>
+  O status das recusas do API Gateway é o comportamento padrão de um Lambda authorizer com respostas simples. O código do Lumora não o define.
+</Note>
+
+O que o cliente faz depois de entrar, como seleção de fotos e pedido, ainda não está documentado nesta seção de fluxos.
+
 ## O que não está implementado
 
-- **Acesso do cliente por token de galeria.** O frontend tem a rota `/g/:token` e um contexto para o token, e o CORS da API libera o header `x-gallery-token`. Não há authorizer, rota nem tabela de tokens.
 - **Login social, MFA e recuperação de conta personalizada.** O User Pool usa a configuração básica.
