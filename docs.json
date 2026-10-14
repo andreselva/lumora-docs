@@ -82,7 +82,8 @@
               "developers/flows/public-client-access",
               "developers/flows/photo-selection",
               "developers/flows/orders",
-              "developers/flows/payment-and-delivery"
+              "developers/flows/payment-and-delivery",
+              "developers/flows/customers"
             ]
           },
           {

@@ -227,8 +227,8 @@ A chave da miniatura depende de `completedAttemptId`, a tentativa que concluiu o
 | Filtro de arquivos | `apps/web/src/studio/galleries/photoFiles.ts` |
 | Fila e agendamento | `apps/web/src/studio/galleries/uploadManager.ts` |
 | Envio ao S3 | `apps/web/src/lib/storageClient.ts` |
-| Polling do resumo | `apps/web/src/studio/hooks/useEventUploadSummary.ts` |
-| Caso de uso de registro | `services/api/src/application/photos/RequestPhotoUploads.ts` |
-| Transação de registro | `services/api/src/infra/dynamodb/DynamoDbPhotoRepository.ts` |
+| Polling do resumo | `apps/web/src/studio/events/useEventUploadSummary.ts` |
+| Caso de uso de registro | `services/api/src/application/photos/commands/RequestPhotoUploads.ts` |
+| Transação de registro | `services/api/src/infra/dynamodb/photo/DynamoDbPhotoRepository.ts` |
 | Assinatura do POST | `services/api/src/infra/s3/S3PhotoStorage.ts` |
 | Chaves do S3 | `services/api/src/shared/storage/S3KeyBuilder.ts` |

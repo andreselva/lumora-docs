@@ -29,6 +29,8 @@ Quatro tipos de item ficam fora dessas famílias, porque são alcançados por um
 | Entidade | `PK` | `SK` |
 | --- | --- | --- |
 | Perfil do fotógrafo | `USER#{sub}` | `PROFILE` |
+| Cliente do fotógrafo | `USER#{sub}` | `CUSTOMER#{customerId}` |
+| Marcador de unicidade do cliente | `USER#{sub}` | `CUSTOMER_EMAIL#{email}`, `CUSTOMER_PHONE#{celular}` ou `CUSTOMER_TAXID#{documento}` |
 | Evento | `USER#{sub}` | `EVENT#{eventId}` |
 | Galeria | `USER#{sub}#EVENT#{eventId}` | `GALLERY#{galleryId}` |
 | Foto | `USER#{sub}#EVENT#{eventId}` | `PHOTO#{galleryId}#{photoId}` |
@@ -47,6 +49,8 @@ Quatro tipos de item ficam fora dessas famílias, porque são alcançados por um
 ```mermaid
 erDiagram
   PHOTOGRAPHER ||--o{ EVENT : "possui"
+  PHOTOGRAPHER ||--o{ CUSTOMER : "cadastra"
+  CUSTOMER ||--o{ EVENT : "vinculado a"
   EVENT ||--|{ GALLERY : "contém"
   GALLERY ||--o{ PHOTO : "contém"
   PHOTO ||--|| FINGERPRINT : "deduplicada por"
@@ -85,6 +89,7 @@ Os repositórios de galeria ainda conferem o atributo `ownerId` do item como seg
 | Operação | Acesso |
 | --- | --- |
 | Ler o perfil | `GetItem` em `USER#{sub}` / `PROFILE` |
+| Listar clientes do fotógrafo | `Query` em `USER#{sub}` com `begins_with(SK, 'CUSTOMER#')`, ordem decrescente, 50 por página, leitura consistente |
 | Listar eventos do fotógrafo | `Query` em `USER#{sub}` com `begins_with(SK, 'EVENT#')`, ordem decrescente, 20 por página |
 | Ler um evento | `GetItem` em `USER#{sub}` / `EVENT#{eventId}` |
 | Listar galerias do evento | `Query` na partição do evento com `begins_with(SK, 'GALLERY#')`, todas as páginas |
@@ -126,6 +131,7 @@ Todas as listagens são `Query`. Não há `Scan` em nenhum repositório.
 | `eventDate` | Data de calendário, sem fuso |
 | `createdAt`, `expiresAt` | Instantes em ISO 8601, UTC |
 | `archivedAt` | `NULL` até o evento ser arquivado |
+| `customerId` | Id do cliente vinculado. Ausente sem vínculo; a API devolve `null`. |
 | `galleryCount` | Número de galerias. Começa em 1, por causa da galeria principal. |
 | `registeredPhotoCount` | Número de fotos já registradas no evento. É mantido durante o registro e copiado para o tombstone como informação da exclusão. |
 | `photoCount` | Contador legado, gravado como 0. Não sai na API. Veja a seção sobre contadores. |
@@ -233,6 +239,8 @@ As operações abaixo gravam mais de um item e usam `TransactWriteItems`:
 | Excluir galeria | galeria e `galleryCount` do evento | A galeria principal não é excluída. Acontece depois de as fotos serem removidas. |
 | Remover foto | foto, fingerprint, seleção e contadores do evento | A vaga da seleção é devolvida junto com a foto. Veja [Exclusão de fotos e galerias](/developers/flows/photo-and-gallery-deletion). |
 | Registrar foto | fingerprint, foto, `registeredPhotoCount` do evento e verificação da galeria | Um arquivo é registrado uma vez por galeria, e só em galeria existente. |
+| Criar cliente | cliente e um marcador de unicidade por e-mail, celular e documento | Nenhum dos três valores se repete entre os clientes do fotógrafo. Veja [Clientes](/developers/flows/customers). |
+| Editar cliente | cliente (condicionado à `version` lida) e os marcadores dos campos que mudaram | Os marcadores acompanham o cadastro, mesmo com edições simultâneas. |
 | Excluir evento | evento ativo, tombstone `EVENT_DELETION` e token do link, se houver | A remoção visível do evento, o registro da limpeza pendente e o fim do acesso do cliente acontecem atomicamente. |
 | Gerar link do cliente | evento, token novo e token anterior | O evento tem um único link válido, e só com pacote definido. |
 | Selecionar foto | evento, verificação da galeria, verificação da foto e item da seleção | A vaga da seleção só é ocupada se houver teto livre, sem pedido ativo e com o link válido. O contador sobe junto com o item. Veja [Seleção de fotos](/developers/flows/photo-selection). |

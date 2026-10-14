@@ -25,7 +25,8 @@ Quando esta documentação e o código divergirem, o código prevalece. Corrija 
 | --- | --- |
 | Cadastro e sessão do fotógrafo (Cognito) | Implementado |
 | Perfil do fotógrafo (`/me`, bootstrap) | Implementado |
-| Eventos: criar, listar, ler, editar | Implementado |
+| Eventos: criar, listar, ler, editar | Implementado, com cliente opcional |
+| Clientes do fotógrafo: cadastrar, listar, ler, editar | Implementado. Sem exclusão |
 | Eventos: excluir | Implementado, com limpeza assíncrona de galerias e fotos |
 | Eventos: pacote e publicação | Implementado |
 | Eventos: arquivar | Presente no domínio e no repositório; sem rota e sem tela |
@@ -63,6 +64,9 @@ Quando esta documentação e o código divergirem, o código prevalece. Corrija 
   <Card title="Acesso público do cliente" icon="link" href="/developers/flows/public-client-access">
     Link, authorizer, sessão e fotos do cliente, sem conta.
   </Card>
+  <Card title="Clientes" icon="users" href="/developers/flows/customers">
+    Cadastro de clientes, unicidade e vínculo com o evento.
+  </Card>
   <Card title="Pagamento e entrega" icon="credit-card" href="/developers/flows/payment-and-delivery">
     Tentativa de pagamento, webhook, estados do pedido e registro da entrega.
   </Card>
@@ -83,7 +87,7 @@ Quando esta documentação e o código divergirem, o código prevalece. Corrija 
 | `packages/contracts` | Schemas zod dos contratos HTTP, consumidos pelo frontend. |
 | `infra/template.yaml` | Toda a infraestrutura AWS, em AWS SAM. |
 | `infra/layers/sharp` | Layer com o binário nativo do sharp para Lambda arm64. |
-| `scripts` | DynamoDB Local, criação de usuário de teste e verificação da versão do Node. |
+| `scripts` | DynamoDB Local, criação de usuário de teste, criação do segredo do gateway de pagamento fake no SSM e verificação da versão do Node. |
 | `tests` | Testes de paridade dos contratos e do cálculo de preço, e do template de infraestrutura. |
 | `docs` | Notas internas: design system, guias de engenharia, revisões e validações pontuais. |
 

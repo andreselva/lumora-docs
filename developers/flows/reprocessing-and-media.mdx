@@ -233,7 +233,7 @@ Veja [Exclusão de fotos e galerias](/developers/flows/photo-and-gallery-deletio
 | Assunto | Arquivo |
 | --- | --- |
 | Pedido de reprocessamento | `services/api/src/application/photos/commands/RequestPhotoReprocessing.ts` |
-| Reivindicação e conclusão | `services/api/src/infra/dynamodb/DynamoDbPhotoRepository.ts` |
+| Reivindicação e conclusão | `services/api/src/infra/dynamodb/photo/DynamoDbPhotoRepository.ts` |
 | Orquestração do processamento | `services/api/src/application/photos/commands/ProcessUploadedPhoto.ts` |
 | Handler da fila | `services/api/src/handlers/sqs/imageProcessor.ts` |
 | Marca d'água e derivados | `services/api/src/infra/sharp/LumoraWatermark.ts`, `SharpProcessor` |
