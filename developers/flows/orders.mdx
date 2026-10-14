@@ -164,7 +164,8 @@ No Lumora Studio, `OrdersPage` e `OrderRow` mostram evento e data, fotos, total 
 
 | Situação | Status | `code` |
 | --- | --- | --- |
-| Link inválido, vencido, revogado ou substituído | 403 | `ACCESS_DENIED` |
+| Abrir ou cancelar um pedido com link vencido, revogado ou substituído, ou com o evento fora de `PUBLISHED` | 403 | `ACCESS_DENIED` |
+| Continuar ou rever o pedido ativo (`POST` com `orderId`) com um link que não é o atual do evento | 403 | `ACCESS_DENIED` |
 | Seleção vazia, ou montagem sem nenhuma foto | 409 | `EMPTY_SELECTION` |
 | Seleção acima das incluídas sem adicionais à venda | 409 | `SELECTION_LIMIT` |
 | `orderId` pedido já não é o ativo do evento | 409 | `ORDER_NOT_ACTIVE` |
@@ -172,6 +173,8 @@ No Lumora Studio, `OrdersPage` e `OrderRow` mostram evento e data, fotos, total 
 | Pedido de outro evento ou inexistente | 404 | `NOT_FOUND` |
 | Escritas simultâneas esgotaram as tentativas | 409 | `CONFLICT` |
 | `orderId` malformado | 400 | `VALIDATION_ERROR` |
+
+Continuar o pedido ativo com o link atual do evento não passa por `canAccessEvent`: com o link vencido ou revogado, mas ainda o atual, `POST /public/orders?orderId=...` responde 200 ou 202. Só abrir um pedido novo e cancelar exigem que o link ainda dê acesso.
 
 ## Garantias e limites
 
