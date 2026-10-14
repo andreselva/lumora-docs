@@ -50,7 +50,8 @@ flowchart LR
 | Lambda `studio-api` | Todas as rotas do fotógrafo. Lê e grava metadados e emite credenciais temporárias de upload e de leitura. |
 | Lambda `postConfirmation` | Cria o perfil do fotógrafo quando o cadastro é confirmado no Cognito. |
 | DynamoDB `lumora-app` | Tabela única com perfis, eventos, galerias, fotos e marcas de deduplicação. |
-| S3 (bucket de fotos) | Guarda os originais e os derivados. Privado e versionado. |
+| S3 (`PhotosBucket`) | Guarda os originais. Privado e versionado. |
+| S3 (`MediaBucket`) e CloudFront | O bucket guarda os derivados. A distribuição os entrega ao navegador. |
 | SQS | Recebe os eventos de criação de objeto do S3 e desacopla o upload do processamento. Tem uma DLQ. |
 | Lambda `imageProcessor` | Consome a fila, valida o original, gera thumbnail e preview e atualiza o estado da foto. |
 
