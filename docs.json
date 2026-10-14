@@ -75,6 +75,7 @@
               "developers/flows/events-and-galleries",
               "developers/flows/event-deletion-reconciliation",
               "developers/flows/photo-upload",
+              "developers/flows/orders",
               "developers/flows/image-processing"
             ]
           },
