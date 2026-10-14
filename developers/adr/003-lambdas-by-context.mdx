@@ -18,13 +18,15 @@ Uma função por endpoint multiplica recursos, permissões e cold starts. Uma fu
 
 Criar uma função por **contexto de execução**, e não por endpoint. Uma função nova só se justifica quando o gatilho, as permissões, o timeout ou a memória são diferentes.
 
-Hoje são sete:
+Hoje são nove:
 
 | Função | Gatilho | Por que é separada |
 | --- | --- | --- |
 | `studio-api` | HTTP API, JWT do Cognito | Requisições curtas do fotógrafo, com leitura e escrita de metadados e acesso de upload. |
 | `public-api` | HTTP API, authorizer do cliente | Outro público e outro conjunto de permissões: sem S3, sem filas. |
 | `public-access-authorizer` | Lambda authorizer | Reconhece o token do link. Só precisa de `GetItem`. |
+| `payment-webhook` | HTTP API, sem authorizer | Outra origem: o gateway de pagamento, que prova quem é pela assinatura. Lê o segredo do SSM (como a `fake-checkout`, as únicas que o fazem) e grava a tentativa, o pedido e a entrega numa transação. |
+| `fake-checkout` | HTTP API, sem authorizer | Só para dev: o lado "provedor" do gateway fake. O template comenta que ela sai junto com o fake. |
 | `postConfirmation` | Cognito | Outro gatilho. Só precisa de `PutItem`. |
 | `imageProcessor` | SQS | Mais memória e tempo, binário nativo, permissão de leitura de objetos. |
 | `deletePhotosGallery` | SQS | Remove objetos nos dois buckets e itens do DynamoDB, com limites próprios. |
@@ -53,4 +55,4 @@ Não há framework web nem contêiner de injeção de dependência. As dependên
 
 O `README.md` registra a intenção de dividir o template em nested stacks quando ele passar de cerca de mil linhas, e de avaliar Step Functions antes de qualquer servidor caso surja um processamento que não caiba em Lambda.
 
-O `README.md` prevê quatro funções além das de hoje: `galleryAuthorizer`, `galleryApi`, `paymentWebhook` e `paymentReconciler`. As duas primeiras existem com os nomes `public-access-authorizer` e `public-api`. As de pagamento não existem.
+O `README.md` prevê quatro funções além das de hoje: `galleryAuthorizer`, `galleryApi`, `paymentWebhook` e `paymentReconciler`. As duas primeiras existem com os nomes `public-access-authorizer` e `public-api`. O webhook existe como `payment-webhook`. O reconciliador de pagamentos não existe.

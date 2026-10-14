@@ -3,7 +3,7 @@ title: "Visão geral da arquitetura"
 description: "Os componentes do Lumora, a responsabilidade de cada um e os dois caminhos que os dados percorrem."
 ---
 
-O Lumora é uma aplicação serverless na AWS. Não há servidor nem processo permanente: a lógica roda em sete funções Lambda, acionadas por requisições HTTP, por um gatilho do Cognito, por duas filas e por um agendamento.
+O Lumora é uma aplicação serverless na AWS. Não há servidor nem processo permanente: a lógica roda em nove funções Lambda, acionadas por requisições HTTP, por um gatilho do Cognito, por duas filas e por um agendamento.
 
 O sistema tem dois caminhos de dados distintos:
 
@@ -70,9 +70,11 @@ flowchart LR
 | Cognito User Pool | Cadastro, login e emissão dos tokens. É a única fonte de identidade do fotógrafo. |
 | API Gateway (HTTP API) | Expõe as rotas e valida o JWT, ou chama o authorizer do cliente, antes de invocar a Lambda. |
 | Lambda `studio-api` | Rotas do fotógrafo. Lê e grava metadados, emite credenciais temporárias de upload e publica jobs de exclusão e reprocessamento. |
-| Lambda `public-api` e `public-access-authorizer` | Rotas `/public/*` do cliente: sessão, fotos, seleção e pedido. O authorizer reconhece o token do link. |
+| Lambda `public-api` e `public-access-authorizer` | Rotas `/public/*` do cliente: sessão, fotos, seleção, pedido e pagamento. O authorizer reconhece o token do link. |
+| Lambda `payment-webhook` | Recebe as notificações do gateway de pagamento, sem authorizer. Confere a assinatura, consulta o gateway e move a tentativa e o pedido. |
+| Lambda `fake-checkout` | Só para dev: o lado "provedor" do gateway fake, que aprova ou recusa um pagamento e devolve a notificação assinada. |
 | Lambda `postConfirmation` | Cria o perfil do fotógrafo quando o cadastro é confirmado no Cognito. |
-| DynamoDB `lumora-app` | Tabela única com perfis, eventos, galerias, fotos, seleção, pedidos, tokens de link e marcas de deduplicação. |
+| DynamoDB `lumora-app` | Tabela única com perfis, eventos, galerias, fotos, seleção, pedidos, tentativas de pagamento, entregas, tokens de link e marcas de deduplicação. |
 | S3 (`PhotosBucket`) | Guarda os originais. Privado e versionado. |
 | S3 (`MediaBucket`) e CloudFront | O bucket guarda os derivados. A distribuição os entrega ao navegador. |
 | SQS, processamento | Recebe os eventos de criação de objeto do S3 e os pedidos de reprocessamento. Tem uma DLQ. |
@@ -161,6 +163,7 @@ Durante um reprocessamento a foto não muda de estado. Veja [Reprocessamento e m
 | --- | --- |
 | Rotas do fotógrafo | `services/api/src/handlers/api/studioApi.ts` |
 | Rotas do cliente | `services/api/src/handlers/api/publicApi.ts` e `handlers/authorizer/publicAccessAuthorizer.ts` |
+| Webhook de pagamento e gateway fake | `services/api/src/handlers/webhooks/paymentWebhook.ts` e `fakeCheckout.ts` |
 | Consumidores de fila | `services/api/src/handlers/sqs/imageProcessor.ts` e `deletePhotosGalleryProcessor.ts` |
 | Reconciliador agendado | `services/api/src/handlers/schedule/eventDeletionReconciler.ts` |
 | Gatilho do Cognito | `services/api/src/handlers/cognito/postConfirmation.ts` |

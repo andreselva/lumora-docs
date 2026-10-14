@@ -3,7 +3,7 @@ title: "Backend"
 description: "Organização do código das Lambdas: handlers, casos de uso, domínio, repositórios, validação, contratos e logging."
 ---
 
-Todo o backend fica em `services/api`. É um único projeto TypeScript que gera sete funções Lambda, uma por arquivo em `src/handlers`. Não há framework web nem contêiner de injeção de dependência.
+Todo o backend fica em `services/api`. É um único projeto TypeScript que gera nove funções Lambda, uma por arquivo em `src/handlers`. Não há framework web nem contêiner de injeção de dependência.
 
 ## Camadas
 
@@ -72,7 +72,13 @@ Todo erro sai no formato `{ code, message, details }`. Erros inesperados são re
 
 ### `publicApi` e `publicAccessAuthorizer`
 
-O `publicApi` atende as rotas `/public/*` do cliente, com o mesmo desenho do `studioApi`: um `switch` sobre `routeKey` e um `try/catch` que traduz erros. Ele não usa o JWT do Cognito. O contexto do `publicAccessAuthorizer` entrega o dono, o evento e o hash do token, e cada operação confere de novo o direito de acesso. Os erros do cliente estão em [Acesso público do cliente](/developers/flows/public-client-access#erros), [Seleção de fotos](/developers/flows/photo-selection) e [Pedidos](/developers/flows/orders).
+O `publicApi` atende as rotas `/public/*` do cliente, com o mesmo desenho do `studioApi`: um `switch` sobre `routeKey` e um `try/catch` que traduz erros. Ele não usa o JWT do Cognito. O contexto do `publicAccessAuthorizer` entrega o dono, o evento e o hash do token, e cada operação confere de novo o direito de acesso. Os erros do cliente estão em [Acesso público do cliente](/developers/flows/public-client-access#erros), [Seleção de fotos](/developers/flows/photo-selection), [Pedidos](/developers/flows/orders) e [Pagamento e entrega](/developers/flows/payment-and-delivery#erros).
+
+### `paymentWebhook` e `fakeCheckout`
+
+`handlers/webhooks/paymentWebhook.ts` atende `POST /webhooks/payments/{gateway}`. Ele não usa authorizer: `ProcessPaymentNotification` confere a assinatura sobre o corpo exato e consulta o gateway antes de gravar. Traduz o resultado para 200 (`APPLIED`, `DUPLICATE`, `UNCHANGED` ou `IGNORED`), 401 (assinatura inválida), 404 (gateway desconhecido) ou 500 (o gateway reenvia).
+
+`handlers/webhooks/fakeCheckout.ts` é o lado "provedor" do gateway fake, só para dev. Veja [Pagamento e entrega](/developers/flows/payment-and-delivery).
 
 ### `imageProcessor`
 
@@ -94,7 +100,7 @@ Gatilho do Cognito. Cria o perfil do fotógrafo após a confirmação do cadastr
 
 ## Rotas
 
-As rotas do fotógrafo abaixo são atendidas pelo `studioApi`. Todas, exceto `GET /health`, exigem o JWT do Cognito. As rotas `/public/*` são do `publicApi` e estão nas páginas de fluxo do cliente.
+As rotas do fotógrafo abaixo são atendidas pelo `studioApi`. Todas, exceto `GET /health`, exigem o JWT do Cognito. O webhook de pagamento e a `fake-checkout` não passam pelo `studioApi` e também não usam o JWT. As rotas `/public/*` são do `publicApi` e estão nas páginas de fluxo do cliente.
 
 | Método e rota | Caso de uso | Fluxo |
 | --- | --- | --- |
