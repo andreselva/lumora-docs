@@ -1,0 +1,88 @@
+---
+title: "Clientes"
+description: "Como o fotógrafo cadastra clientes, o que garante que e-mail, celular e documento não se repitam e como o cadastro se liga ao evento e ao pagamento."
+---
+
+Um **cliente** é a pessoa ou a empresa para quem o fotógrafo fotografa. É um cadastro do fotógrafo, e o evento aponta para ele. Não é o visitante do link do evento, que não tem conta nem cadastro.
+
+O cadastro importa porque o gateway de pagamento precisa dos dados do pagador: sem cliente vinculado ao evento, o cliente do link não consegue abrir o pagamento do pedido. Veja [Pagamento e entrega](/developers/flows/payment-and-delivery).
+
+## O cadastro
+
+| Campo | Regra |
+| --- | --- |
+| `name` | De 2 a 120 caracteres, sem espaços nas pontas. |
+| `email` | Em minúsculas, até 254 caracteres, formato de e-mail. |
+| `phone` | Só dígitos, com DDD e 10 ou 11 números. O `55` do país é removido quando sobra um número com mais de 11 dígitos. |
+| `taxId` e `taxIdType` | `cpf` ou `cnpj`, gravado sem pontuação e em maiúsculas. O CPF precisa ter os dois dígitos verificadores corretos, e sequências de um dígito só não valem. O CNPJ tem só o formato conferido: 12 posições alfanuméricas e 2 dígitos. |
+| `address` | `street`, `number` (inteiro de 1 a 999.999), `neighborhood`, `city`, `state` (sigla da UF, 2 letras), `country`. |
+
+Cada cliente também guarda `id` (um ULID gerado no caso de uso), `ownerId`, `createdAt`, `updatedAt` e `version`.
+
+A normalização acontece no contrato (`CustomerInputSchema`), antes de qualquer gravação. É ela que faz `123.456.789-09` e `12345678909` serem o mesmo documento. O contrato tem uma cópia no frontend (`packages/contracts/src/customer.ts`), protegida por `tests/customer-contract-parity.test.ts`.
+
+## Rotas
+
+Todas no `studio-api`, com o JWT do Cognito. O dono vem só do token.
+
+| Rota | Caso de uso | Resposta |
+| --- | --- | --- |
+| `POST /customers` | `CreateCustomer` | 201 com o cliente |
+| `GET /customers` | `ListCustomers` | Página de 50, do cadastro mais recente ao mais antigo, com `nextCursor` opcional |
+| `GET /customers/{customerId}` | `GetCustomer` | O cliente |
+| `PUT /customers/{customerId}` | `UpdateCustomer` | O cliente salvo |
+
+Não há rota para excluir um cliente.
+
+A listagem faz `Query` consistente em `USER#{sub}` com `begins_with(SK, 'CUSTOMER#')`, em ordem decrescente. O cursor é validado contra o dono e o prefixo `CUSTOMER#`, e um cursor de outro fotógrafo responde 400. Um `customerId` malformado responde 404, sem consultar o banco, e um cliente de outro fotógrafo responde como inexistente.
+
+## Unicidade de e-mail, celular e documento
+
+Cada um dos três valores só pode estar em **um** cadastro do mesmo fotógrafo. O DynamoDB não tem índice único, então a garantia vem de **marcadores de unicidade**: um item por valor em uso, `USER#{sub}` / `CUSTOMER_EMAIL#{valor}`, `CUSTOMER_PHONE#{valor}` ou `CUSTOMER_TAXID#{valor}`. O prefixo não começa com `CUSTOMER#`, então a listagem não os lê.
+
+| Operação | Transação |
+| --- | --- |
+| Criar | `Put` do cliente (não pode existir) e um `Put` por marcador, cada um com `attribute_not_exists`. |
+| Editar | `Put` do cliente, condicionado à `version` lida, e, para cada campo único que mudou, um `Put` do marcador novo e um `Delete` do antigo. |
+
+Se um marcador já existe, a transação inteira é recusada e a API responde 409 `CUSTOMER_DUPLICATE`, com `details.fields` listando quais campos repetem (`email`, `phone`, `taxId`). Duas criações simultâneas com o mesmo e-mail disputam o mesmo marcador, e só uma vence.
+
+A edição **substitui** os dados do cadastro (`PUT`). A `version` sobe a cada edição, e a escrita é condicionada à versão lida, para que os marcadores trocados sejam sempre os deste cadastro. Se outra edição passar na frente, o repositório relê e tenta de novo, até 3 vezes; depois disso, `WriteConflictError`. Edições concorrentes seguem "a última escrita vence". Repetir uma edição sem mudança de dados é uma operação sem efeito.
+
+Repetir uma criação já gravada responde duplicado: os próprios campos únicos identificam a repetição.
+
+## Vínculo com o evento
+
+O evento guarda só o `customerId`.
+
+- `POST /events` aceita `customerId` opcional.
+- `PATCH /events/{eventId}` aceita `customerId`, e `null` desfaz o vínculo.
+- A gravação confere, na mesma transação, que o cliente existe na partição do fotógrafo (`ConditionCheck` em `USER#{sub}` / `CUSTOMER#{id}`). Um id inexistente, ou de outro fotógrafo, responde 404 `NOT_FOUND`.
+- `GET /events/{eventId}` e a lista devolvem `customerId`, ou `null`.
+
+Trocar o cliente do evento não muda pagamentos nem entregas já criados: a tentativa guarda um retrato dos dados do cliente do momento do checkout, e a entrega guarda o `customerId` de quando nasceu.
+
+## Frontend do Studio
+
+- **Menu e rotas.** **Clientes** no menu, com `/app/clientes` (lista paginada), `/app/clientes/novo` e `/app/clientes/:customerId`.
+- **Formulário.** `CustomerFormPage` e `CustomerFields`, com os campos acima. Os campos aceitam o valor com ou sem pontuação, e as telas mostram celular e documento formatados. Erros de campo da API, inclusive `CUSTOMER_DUPLICATE`, aparecem no campo.
+- **No evento.** `EventCustomerSection` fica dentro do formulário do evento. O fotógrafo escolhe um cadastro existente ou **Sem cliente**, ou preenche um novo ali mesmo. Como o evento guarda só o id, `useEventCustomer.resolve` cadastra o cliente novo **antes** de salvar o evento. Se salvar o evento falhar depois, a nova tentativa já usa o cliente cadastrado e não o cadastra de novo.
+
+## Garantias e limites
+
+- **Isolamento.** O cliente fica na partição do fotógrafo. Nenhuma rota aceita o dono por path, query ou corpo.
+- **Sem repetição.** E-mail, celular e documento são únicos por fotógrafo, inclusive sob concorrência.
+- **Sem exclusão.** Não existe rota nem caso de uso para excluir um cliente, e os marcadores só mudam quando o campo muda.
+- **Sem validação de existência do documento.** O CPF tem os dígitos verificadores conferidos, mas o CNPJ só o formato. Nada consulta uma base externa.
+
+## Onde está no código
+
+| Parte | Caminho |
+| --- | --- |
+| Rotas | `services/api/src/handlers/api/studioApi.ts`, `controllers/CustomerController.ts` |
+| Casos de uso | `services/api/src/application/customers` |
+| Contrato | `services/api/src/contracts/customer/CustomerSchemas.ts` |
+| Entidade e erros | `services/api/src/domain/customer` |
+| Persistência e marcadores | `services/api/src/infra/dynamodb/customer/DynamoDbCustomerRepository.ts` |
+| Telas | `apps/web/src/studio/customers` |
+| Cliente no formulário do evento | `apps/web/src/studio/events/EventCustomerSection.tsx`, `useEventCustomer.ts` |

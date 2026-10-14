@@ -80,7 +80,7 @@ A tentativa guarda o valor do pedido no momento da abertura (`totalCents` e `cur
 
 O link é conferido antes do pedido, para que a resposta não revele se o pedido existe. Diferentemente de continuar um pedido, abrir o pagamento sempre passa por `canAccessEvent`: com o link vencido, revogado ou substituído, a resposta é 403.
 
-O gateway exige os dados do pagador, por isso o evento precisa ter um cliente vinculado (`event.customerId`) antes de o pagamento abrir.
+O gateway exige os dados do pagador, por isso o evento precisa ter um [cliente](/developers/flows/customers) vinculado (`event.customerId`) antes de o pagamento abrir.
 
 `DynamoDbPaymentRepository.open` grava, numa transação:
 

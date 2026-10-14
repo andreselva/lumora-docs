@@ -25,7 +25,8 @@ apps/web/src
 │   ├── StudioRoutes   rotas dentro do Authenticator
 │   ├── api.ts         cliente HTTP autenticado
 │   ├── account        perfil e bootstrap
-│   ├── events         eventos, pacote, link do cliente e resumo de upload
+│   ├── customers      clientes do fotógrafo: lista e formulário
+│   ├── events         eventos, pacote, link do cliente, cliente do evento e resumo de upload
 │   ├── galleries      galerias, fotos, seleção e o UploadManager
 │   ├── orders         lista de pedidos
 │   └── home           página inicial
@@ -51,6 +52,9 @@ apps/web/src
 | `/app/eventos/:eventId` | `EventWorkspacePage` | Evento, pacote, link do cliente, galerias, fotos e seleção da galeria principal. |
 | `/app/eventos/:eventId/galerias/:galleryId` | `EventWorkspacePage` | O mesmo, com uma galeria específica selecionada. |
 | `/app/minha-conta` | `MyAccountPage` | Dados do perfil. |
+| `/app/clientes` | `CustomersPage` | Lista paginada de clientes. Veja [Clientes](/developers/flows/customers). |
+| `/app/clientes/novo` | `CustomerFormPage` | Formulário de cadastro. |
+| `/app/clientes/:customerId` | `CustomerFormPage` | Edição do cliente. |
 | `/app/pedidos` | `OrdersPage` | Lista paginada de pedidos, somente leitura. |
 | `/app/configuracoes/*` | nenhuma | Rota declarada sem elemento. |
 
