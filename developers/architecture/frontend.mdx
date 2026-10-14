@@ -29,15 +29,17 @@ apps/web/src
 │   ├── galleries      galerias, fotos, seleção e o UploadManager
 │   ├── orders         lista de pedidos
 │   └── home           página inicial
-├── public             área do cliente (/g/:token/*): sessão, galerias, fotos, seleção e pedido
+├── public             área do cliente (/g/:token/*): sessão, galerias, fotos, seleção, pedido e pagamento
+├── dev                página do checkout do gateway fake (/dev/fake-checkout)
 ├── components         layout de página e componentes de UI
 └── mocks              handlers MSW, opcionais
 ```
 
-`App.tsx` declara duas áreas, cada uma carregada com `lazy`:
+`App.tsx` declara duas áreas e uma página de desenvolvimento, cada uma carregada com `lazy`:
 
 - `/app/*`: o Lumora Studio, área do fotógrafo. A raiz `/` redireciona para `/app`.
-- `/g/:token/*`: a área pública do cliente, sem conta. O token do link fica só em memória e acompanha cada chamada no header `x-access-token`. Veja [Acesso público do cliente](/developers/flows/public-client-access).
+- `/g/:token/*`: a área pública do cliente, sem conta. O token do link fica só em memória e acompanha cada chamada no header `x-access-token`. Veja [Acesso público do cliente](/developers/flows/public-client-access). Dentro dela, `/g/:token/pedido/:orderId` mostra o pedido e leva ao pagamento (`OrderPaymentPage`).
+- `/dev/fake-checkout`: o checkout de mentira do gateway fake (`FakeCheckoutPage`). A rota está sempre registrada, mas existe só para desenvolvimento e sai quando houver um gateway real. Veja [Pagamento e entrega](/developers/flows/payment-and-delivery#o-gateway-fake).
 
 ### Rotas do Studio
 

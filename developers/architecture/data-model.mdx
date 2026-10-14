@@ -13,8 +13,8 @@ As chaves são montadas em `services/api/src/infra/dynamodb/keys.ts`.
 | --- | --- |
 | Chave de partição | `PK`, string |
 | Chave de ordenação | `SK`, string |
-| Índice global | `GSI1`, com `GSI1PK` e `GSI1SK`, projeção completa. Dois usos: a lista de pedidos do fotógrafo e a partição esparsa `EVENT_DELETION#PENDING`, que localiza reconciliações de exclusão vencidas. |
-| TTL | Não configurado |
+| Índice global | `GSI1`, com `GSI1PK` e `GSI1SK`, projeção completa. Usos: a lista de pedidos do fotógrafo, a partição esparsa `EVENT_DELETION#PENDING`, que localiza reconciliações de exclusão vencidas, e as entradas de entregas e de tentativas de pagamento, na partição `USER#{sub}` do fotógrafo. |
+| TTL | Atributo `ttl`, usado só pelas marcas de notificação de pagamento (`WEBHOOK#`) |
 | Modo de capacidade | Sob demanda |
 
 ## Entidades e chaves
@@ -37,6 +37,10 @@ Quatro tipos de item ficam fora dessas famílias, porque são alcançados por um
 | Foto selecionada | `GALLERY#{galleryId}` | `SEL#{photoId}` |
 | Pedido | `ORDER#{orderId}` | `META` |
 | Item de um pedido | `ORDER#{orderId}` | `ITEM#{assemblyId}#{photoId}` |
+| Tentativa de pagamento | `ORDER#{orderId}` | `PAYMENT#{paymentId}` |
+| Marca de notificação de pagamento | `WEBHOOK#{gateway}#{notificationId}` | `WEBHOOK` |
+| Pagamento do gateway fake | `FAKEPAY#{gatewayPaymentId}` | `META` |
+| Entrega | `DELIVERY#{deliveryId}` | `META` |
 | Tombstone de exclusão de evento | `USER#{sub}` | `EVENT_DELETION#{eventId}` |
 | Lease de exclusão de fotos escolhidas | `USER#{sub}#EVENT#{eventId}` | `DELETE_SELECTED#{operationId}#{step}` |
 
@@ -50,6 +54,8 @@ erDiagram
   GALLERY ||--o{ SELECTION : "recebe"
   EVENT ||--o{ ORDER : "gera"
   ORDER ||--o{ ORDER_ITEM : "contém"
+  ORDER ||--o{ PAYMENT : "tentativas de pagamento"
+  ORDER ||--o| DELIVERY : "gera, se pago ou confirmado"
 ```
 
 ### Exemplo
@@ -91,6 +97,9 @@ Os repositórios de galeria ainda conferem o atributo `ownerId` do item como seg
 | Listar a seleção de uma galeria | `Query` em `GALLERY#{galleryId}` com `begins_with(SK, 'SEL#')` |
 | Ler um pedido | `GetItem` em `ORDER#{orderId}` / `META` |
 | Listar pedidos do fotógrafo | `Query` no `GSI1` com `GSI1PK = USER#{sub}` e `begins_with(GSI1SK, 'ORDER#')` |
+| Ler a tentativa de pagamento atual de um pedido | `GetItem` do pedido, projetando `activePaymentId`, e `GetItem` em `ORDER#{orderId}` / `PAYMENT#{paymentId}` |
+| Reconhecer uma notificação já aplicada | escrita condicional do item `WEBHOOK#...`; falha se já existe |
+| Ler uma entrega | `GetItem` em `DELIVERY#{deliveryId}` / `META` |
 | Achar exclusões de evento vencidas | `Query` no `GSI1` com `GSI1PK = EVENT_DELETION#PENDING` e `GSI1SK` até agora |
 
 Duas escolhas de ordenação seguem dos ULIDs:
@@ -197,8 +206,19 @@ O pedido tem uma partição própria, `ORDER#{orderId}`, e uma entrada no GSI1 d
 
 | Item | `PK` | `SK` | Conteúdo |
 | --- | --- | --- | --- |
-| Pedido | `ORDER#{orderId}` | `META` | `ownerId`, `eventId`, `status`, `currency`, retrato do pacote (`package`), `quote`, `assembly`, datas. Depois de publicado, também `GSI1PK` = `USER#{sub}` e `GSI1SK` = `ORDER#{createdAt}`. |
+| Pedido | `ORDER#{orderId}` | `META` | `ownerId`, `eventId`, `status`, `currency`, retrato do pacote (`package`), `quote`, `assembly`, datas. Depois de publicado, também `GSI1PK` = `USER#{sub}` e `GSI1SK` = `ORDER#{createdAt}`. Quando existem, `activePaymentId` e `deliveryId`. |
 | Item da montagem | `ORDER#{orderId}` | `ITEM#{assemblyId}#{photoId}` | `galleryId` e `photoId`. Os itens de cada montagem ficam separados e nunca são apagados. |
+| Tentativa de pagamento | `ORDER#{orderId}` | `PAYMENT#{paymentId}` | `ownerId`, `gateway`, `totalCents`, `currency`, retrato dos dados do cliente do evento, `checkout` (`null` ou `gatewayCheckoutId` e `checkoutUrl`), `status`, datas. Enquanto o checkout é criado, também `checkoutAttemptId` e `checkoutLeaseUntil`. `GSI1PK` = `USER#{sub}` e `GSI1SK` = `PAYMENT#{createdAt}#{paymentId}`. |
+
+### Pagamentos, notificações e entregas
+
+| Item | `PK` | `SK` | Conteúdo |
+| --- | --- | --- | --- |
+| Marca de notificação | `WEBHOOK#{gateway}#{notificationId}` | `WEBHOOK` | `orderId`, `paymentId`, `createdAt` e `ttl` (30 dias). Gravada na mesma transação que aplica a notificação; a condição de não existir reconhece a reentrega. |
+| Pagamento do gateway fake | `FAKEPAY#{gatewayPaymentId}` | `META` | `orderId`, `paymentId`, `amountCents`, `currency`, `status`. É o "banco" do provedor de mentira; só existe com ele. |
+| Entrega | `DELIVERY#{deliveryId}` | `META` | `ownerId`, `eventId`, `orderId`, `assemblyId`, `customerId` (opcional), `status`, `downloadLink` e `deliveredAt` (opcionais), datas. `GSI1PK` = `USER#{sub}` e `GSI1SK` = `DELIVERY#{createdAt}#{deliveryId}`. |
+
+A tentativa fica na partição do **pedido**, e a entrega, numa partição **própria**, fora da do evento. A exclusão do evento não leva junto o que o cliente comprou. O fluxo está em [Pagamento e entrega](/developers/flows/payment-and-delivery).
 
 O pedido guarda `ownerId` e `eventId`, e quem o lê confere os dois. Os campos do evento que o pedido usa (`activeOrderId`, `orderCount`, `selectionRevision`) estão em [Seleção de fotos](/developers/flows/photo-selection) e [Pedidos](/developers/flows/orders).
 
@@ -217,8 +237,11 @@ As operações abaixo gravam mais de um item e usam `TransactWriteItems`:
 | Gerar link do cliente | evento, token novo e token anterior | O evento tem um único link válido, e só com pacote definido. |
 | Selecionar foto | evento, verificação da galeria, verificação da foto e item da seleção | A vaga da seleção só é ocupada se houver teto livre, sem pedido ativo e com o link válido. O contador sobe junto com o item. Veja [Seleção de fotos](/developers/flows/photo-selection). |
 | Desmarcar foto | evento, verificação da galeria e item da seleção | O contador só desce junto com a remoção do item. |
+| Abrir pagamento | tentativa nova, `activePaymentId` do pedido e verificação do link no evento | Uma tentativa ativa por pedido, e só enquanto o pedido espera pagamento. Veja [Pagamento e entrega](/developers/flows/payment-and-delivery). |
+| Reivindicar a criação do checkout | tentativa, verificação do pedido e do link | Só uma chamada pede o checkout ao gateway por vez. |
+| Aplicar notificação de pagamento | marca da notificação, tentativa, pedido e, se pago, entrega | A notificação se aplica uma vez; o pedido muda de estado e ganha a entrega juntos. |
 | Abrir pedido | evento e pedido | Um pedido ativo por evento, com a seleção congelada e o pacote travado. Veja [Pedidos](/developers/flows/orders). |
-| Montar, publicar, descartar e cancelar pedido | pedido, itens copiados e, conforme o caso, evento | Cada página de itens avança o cursor da montagem na mesma escrita que os grava. Descartar e cancelar também liberam `activeOrderId`. |
+| Montar, publicar, descartar e cancelar pedido | pedido, itens copiados e, conforme o caso, evento e entrega | Cada página de itens avança o cursor da montagem na mesma escrita que os grava. Descartar e cancelar também liberam `activeOrderId`. Publicar com valor zero cria a entrega na mesma transação. |
 
 As transições do processamento, ao contrário, usam um único `UpdateItem` condicional sobre a foto, sem transação e sem tocar no evento.
 

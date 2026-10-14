@@ -3,11 +3,11 @@ title: "Observabilidade"
 description: "Logs estruturados, as métricas do processador de imagens, os alarmes das DLQs e o que ainda não é medido."
 ---
 
-A observabilidade do Lumora hoje se resume a **logs estruturados**, **cinco métricas do processador de imagens** e **dois alarmes**, um por DLQ. Não há tracing nem dashboard.
+A observabilidade do Lumora hoje se resume a **logs estruturados**, **cinco métricas do processador de imagens** e **dois alarmes**, um por DLQ. Não há tracing nem dashboard. O fluxo de pagamento só deixa logs.
 
 ## Logs
 
-Seis das sete funções usam o Logger do AWS Lambda Powertools (a exceção é o `public-access-authorizer`), que escreve uma linha JSON por registro no CloudWatch Logs.
+Oito das nove funções usam o Logger do AWS Lambda Powertools (a exceção é o `public-access-authorizer`), que escreve uma linha JSON por registro no CloudWatch Logs.
 
 | Função | `service` no log | Retenção |
 | --- | --- | --- |
@@ -17,9 +17,11 @@ Seis das sete funções usam o Logger do AWS Lambda Powertools (a exceção é o
 | `ImageProcessorFunction` | `image-processor` | 14 dias |
 | `DeletePhotosGalleryFunction` | `delete-photos-gallery-processor` | 14 dias |
 | `EventDeletionReconcilerFunction` | `event-deletion-reconciler` | 14 dias |
+| `payment-webhook` | `payment-webhook` | 14 dias |
+| `fake-checkout` | `payment-webhook` | 14 dias |
 | `PostConfirmationFunction` | `studio-api` | 14 dias |
 
-O `public-api` e o `postConfirmation` usam a mesma instância de logger da `studio-api`, por isso seus registros também saem com `service` igual a `studio-api`. O log group é o que distingue as funções.
+A `fake-checkout` usa a instância de logger do `payment-webhook`. O `public-api` e o `postConfirmation` usam a mesma instância de logger da `studio-api`, por isso seus registros também saem com `service` igual a `studio-api`. O log group é o que distingue as funções.
 
 ### Campos da `studio-api`
 
@@ -97,6 +99,22 @@ fields @timestamp, photoId, eventId, stage, errorMessage
 
 A `DeletePhotosGalleryFunction` registra `Erro ao processar mensagem de exclusão` quando uma mensagem falha. O `EventDeletionReconcilerFunction` registra `Reconciliação de exclusões de evento concluída`, com o resultado da rodada, e `Limpeza de evento parada; galerias reenfileiradas` quando reenfileira galerias. Veja [Reconciliação da exclusão de eventos](/developers/flows/event-deletion-reconciliation).
 
+### Logs do pagamento
+
+O `payment-webhook` e a `fake-checkout` escrevem com `service` igual a `payment-webhook`. Cada requisição do webhook carrega `requestId`.
+
+| Mensagem | Nível | Significado |
+| --- | --- | --- |
+| `Transição de pagamento` | info | Auditoria de cada notificação aplicada, com `orderId`, `paymentId`, `gateway`, `notificationId` e os estados antes e depois da tentativa e do pedido. |
+| `Pedido em análise: pagamento não fecha com o pedido` | error | O pedido foi para `REVIEW`. O campo `reason` traz `AMOUNT_MISMATCH` ou `PAID_AFTER_CANCEL`. É o único lugar onde o motivo fica registrado. |
+| `Transição de pagamento recusada` | error | O gateway informou um estado que a tentativa não aceita, como "recusado" depois de "pago". A notificação é ignorada. |
+| `Notificação de pagamento sem tentativa correspondente` | warn | A referência não é uma tentativa nossa aberta com este gateway. A notificação é ignorada. |
+| `Notificação de pagamento com assinatura inválida` | warn | O webhook respondeu 401. Traz o nome do gateway. |
+| `Falha ao processar notificação de pagamento` | error | Falha inesperada. O webhook responde 500 e o gateway reenvia. |
+| `Falha no checkout fake` | error | Falha inesperada na `fake-checkout`. |
+
+O template não declara alarme sobre essas mensagens. O `REVIEW` é registrado como erro para permitir um alarme, mas hoje ele só aparece se alguém consultar o log group.
+
 ## Métricas
 
 O `imageProcessor` publica métricas no formato EMF, no namespace `Lumora`, com a dimensão `service` igual a `image-processor`. O `photoId`, o `eventId` e demais identificadores ficam só nos logs, nunca em dimensões.
@@ -146,7 +164,7 @@ O resumo de upload, `GET /events/{eventId}/upload-summary`, é também uma ferra
 | Métricas de negócio, da API e das filas de exclusão | Não há. Além das cinco do `imageProcessor`, só as métricas padrão dos serviços AWS. |
 | Tracing (X-Ray) | Não habilitado. |
 | Dashboard | Não há. |
-| Alarmes de erro das Lambdas, de 5xx da API, de idade da fila ou sobre as métricas do processador | Não há. Os únicos alarmes são os das duas DLQs. |
+| Alarmes de erro das Lambdas, de 5xx da API, de idade da fila, de pedidos em `REVIEW` ou sobre as métricas do processador | Não há. Os únicos alarmes são os das duas DLQs. |
 | Log de requisições bem-sucedidas | A API não registra. |
 | Log de acesso do API Gateway | Não configurado. |
 | Correlação entre a requisição de upload e o processamento | Não há id comum. A ligação é o `photoId`. |
@@ -159,5 +177,6 @@ O `README.md` do repositório `lumora` descreve um plano incremental de observab
 - As respostas de validação não devolvem o valor enviado, apenas o campo e o código.
 - O `postConfirmation` registra `userName` e `userPoolId` a cada confirmação.
 - O token do link do cliente chega no header `x-access-token`. Nenhuma função o registra.
+- O webhook de pagamento não registra o corpo nem a assinatura da notificação, nem os dados do cliente do pagamento.
 - Os logs de falha do processamento incluem identificadores de foto, evento e galeria, mas não o nome original do arquivo.
 - Os registros `Parser da key incorreto` e `Record versionId ausente` incluem a chave do objeto no S3, que contém o `sub` do fotógrafo.

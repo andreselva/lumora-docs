@@ -41,7 +41,9 @@ Quando esta documentação e o código divergirem, o código prevalece. Corrija 
 | Galeria do cliente (`/g/:token`) | Implementado: sessão, galerias e fotos, com authorizer próprio |
 | Seleção de fotos pelo cliente | Implementado, com limite do pacote e exportação para o fotógrafo |
 | Pedidos | Criação e cancelamento pelo cliente, lista para o fotógrafo |
-| Pagamento e entrega dos originais | Não implementado |
+| Pagamento do pedido | Fluxo implementado e testado **só com o gateway fake** de dev: tentativa de pagamento, checkout, webhook assinado e estados `PAID` e `REVIEW`. Sem provedor real e sem reconciliação |
+| Registro da entrega | Implementado: nasce `PENDING` com o pedido pago ou confirmado |
+| Download das fotos entregues | Não implementado: não há upload das tratadas, link de download nem rota |
 
 ## Por onde começar
 
@@ -61,6 +63,9 @@ Quando esta documentação e o código divergirem, o código prevalece. Corrija 
   <Card title="Acesso público do cliente" icon="link" href="/developers/flows/public-client-access">
     Link, authorizer, sessão e fotos do cliente, sem conta.
   </Card>
+  <Card title="Pagamento e entrega" icon="credit-card" href="/developers/flows/payment-and-delivery">
+    Tentativa de pagamento, webhook, estados do pedido e registro da entrega.
+  </Card>
   <Card title="Decisões arquiteturais" icon="scale-balanced" href="/developers/adr/index">
     O que foi decidido e por quê.
   </Card>
@@ -74,7 +79,7 @@ Quando esta documentação e o código divergirem, o código prevalece. Corrija 
 | Caminho | Conteúdo |
 | --- | --- |
 | `apps/web` | Frontend React (Vite). Área do fotógrafo em `/app/*` e área do cliente em `/g/:token/*`. |
-| `services/api` | Código das sete funções Lambda: handlers, controllers, casos de uso, domínio e infraestrutura. |
+| `services/api` | Código das nove funções Lambda: handlers, controllers, casos de uso, domínio e infraestrutura. |
 | `packages/contracts` | Schemas zod dos contratos HTTP, consumidos pelo frontend. |
 | `infra/template.yaml` | Toda a infraestrutura AWS, em AWS SAM. |
 | `infra/layers/sharp` | Layer com o binário nativo do sharp para Lambda arm64. |

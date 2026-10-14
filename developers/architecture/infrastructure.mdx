@@ -15,6 +15,8 @@ Esta página explica o papel de cada recurso. Para valores exatos, consulte o te
 | Lambda | `studio-api` | Rotas do fotógrafo. |
 | Lambda | `public-api` | Rotas do cliente, em `/public/*`. |
 | Lambda | `public-access-authorizer` | Valida o token do link do cliente. |
+| Lambda | `payment-webhook` | Recebe as notificações do gateway de pagamento em `/webhooks/payments/{gateway}`. |
+| Lambda | `fake-checkout` | Lado "provedor" do gateway fake, em `/dev/fake-checkout/{paymentId}`. Só para dev. |
 | Lambda | `PostConfirmationFunction` | Criação do perfil no cadastro. |
 | Lambda | `ImageProcessorFunction` | Geração de derivados. |
 | Lambda | `DeletePhotosGalleryFunction` | Exclusão de fotos e galerias em segundo plano. |
@@ -28,20 +30,23 @@ Esta página explica o papel de cada recurso. Para valores exatos, consulte o te
 | SQS | fila de exclusão e DLQ | Trabalho de exclusão de fotos e galerias. |
 | EventBridge | regra agendada (`rate(15 minutes)`) | Dispara o reconciliador de exclusões. |
 | SNS | tópico de alarme e assinatura por e-mail | Destino dos alarmes das duas DLQs. |
-| CloudWatch | log groups e dois alarmes | Logs das sete funções e alarmes das DLQs. |
+| SSM Parameter Store | `FakePaymentSecretParameter` | Segredo `SecureString` que assina as notificações do gateway fake. Criado fora do template. |
+| CloudWatch | log groups e dois alarmes | Logs das nove funções e alarmes das DLQs. |
 | IAM | políticas por função | Permissões mínimas de cada Lambda. |
 
-Serviços que o `README.md` do `lumora` menciona, mas que **não** estão no template: SSM Parameter Store, WAF e X-Ray. O CloudFront, que o README também menciona, está no template e serve os derivados. O agendamento do reconciliador é um evento `Schedule` do SAM, não o serviço EventBridge Scheduler.
+Serviços que o `README.md` do `lumora` menciona, mas que **não** estão no template: WAF e X-Ray. O SSM Parameter Store só aparece como referência ao parâmetro do segredo do gateway fake, que o template não cria. O CloudFront, que o README também menciona, está no template e serve os derivados. O agendamento do reconciliador é um evento `Schedule` do SAM, não o serviço EventBridge Scheduler.
 
 ## Funções Lambda
 
-As sete funções compartilham o mesmo código-fonte, `services/api`, e são empacotadas separadamente pelo esbuild, cada uma a partir do seu handler. Todas rodam em Node.js 22 sobre arm64. Os padrões do template são 10 s e 256 MB.
+As nove funções compartilham o mesmo código-fonte, `services/api`, e são empacotadas separadamente pelo esbuild, cada uma a partir do seu handler. Todas rodam em Node.js 22 sobre arm64. Os padrões do template são 10 s e 256 MB.
 
 | Função | Gatilho | Timeout | Memória |
 | --- | --- | --- | --- |
 | `studio-api` | HTTP API, authorizer Cognito | 10 s | 256 MB |
 | `public-api` | HTTP API, `PublicAccessAuthorizer` | 10 s | 256 MB |
 | `public-access-authorizer` | Lambda authorizer da HTTP API | 10 s | 256 MB |
+| `payment-webhook` | HTTP API, sem authorizer (`POST /webhooks/payments/{gateway}`) | 10 s | 256 MB |
+| `fake-checkout` | HTTP API, sem authorizer (`GET` e `POST /dev/fake-checkout/{paymentId}`) | 10 s | 256 MB |
 | `PostConfirmationFunction` | Cognito, `PostConfirmation` | 10 s | 256 MB |
 | `ImageProcessorFunction` | SQS, fila de processamento | 60 s | 1536 MB |
 | `DeletePhotosGalleryFunction` | SQS, fila de exclusão | 60 s | 256 MB |
@@ -65,6 +70,8 @@ Cada função recebe só o que usa:
 | --- | --- | --- | --- |
 | `studio-api` | `GetItem`, `PutItem`, `Query`, `UpdateItem`, `DeleteItem`, `ConditionCheckItem`, `BatchGetItem`; `Query` também no `GSI1` | `PutObject` e `GetObject` em `photos/*` do `PhotosBucket`; `ListBucket` restrito ao prefixo `photos/` | `sqs:SendMessage` nas filas de exclusão e de processamento |
 | `public-api` | `GetItem`, `Query`, `PutItem`, `UpdateItem`, `ConditionCheckItem`, `DeleteItem` | nenhum | nenhum |
+| `payment-webhook` | `GetItem`, `PutItem`, `UpdateItem` | nenhum | `ssm:GetParameter` só no parâmetro do segredo do fake |
+| `fake-checkout` | `GetItem`, `UpdateItem` | nenhum | `ssm:GetParameter` só no parâmetro do segredo do fake |
 | `public-access-authorizer` | `GetItem` | nenhum | nenhum |
 | `PostConfirmationFunction` | `PutItem` | nenhum | nenhum |
 | `ImageProcessorFunction` | `GetItem`, `UpdateItem` | `PhotosBucket`: `GetObject`, `GetObjectVersion`, `DeleteObject`. `MediaBucket`: `PutObject`, `DeleteObject` | leitura da fila de processamento |
@@ -85,7 +92,8 @@ A API é uma HTTP API (v2) com estágio `dev`.
 - **Autorização.** Um JWT authorizer nativo valida o token contra o User Pool. Ele é o authorizer padrão e exige o scope `aws.cognito.signin.user.admin`. Cada rota protegida declara o authorizer e o scope explicitamente.
 - **Rota sem credencial.** Somente `GET /health` usa `Authorizer: NONE`.
 - **Rotas do cliente.** As rotas `/public/*` usam o `PublicAccessAuthorizer`, um Lambda authorizer que lê o header `x-access-token`, com resposta em cache por token por 60 segundos. Cada uma declara limite de 20 requisições por segundo, com rajada de 40. Veja [Acesso público do cliente](/developers/flows/public-client-access).
-- **CORS.** A API aceita qualquer origem, com os headers `Content-Type`, `Authorization` e `x-access-token`.
+- **Rotas de pagamento.** `POST /public/payment/{orderId}` e `GET /public/orders/{orderId}` seguem o `PublicAccessAuthorizer`, com 20 requisições por segundo e rajada de 40. `POST /webhooks/payments/{gateway}` não tem authorizer e tem o mesmo limite: quem prova a origem é a assinatura do provedor. As rotas `/dev/fake-checkout/{paymentId}` também não têm authorizer e limitam em 5 por segundo, rajada de 10. Veja [Pagamento e entrega](/developers/flows/payment-and-delivery).
+- **CORS.** A API aceita qualquer origem, com os headers `Content-Type`, `Authorization`, `x-access-token` e `x-fake-signature`. O último existe para a página de checkout fake entregar no webhook a notificação assinada.
 
 ## Cognito
 
@@ -102,7 +110,7 @@ Há uma única tabela, `lumora-app`, em modo sob demanda (`PAY_PER_REQUEST`), co
 O nome da tabela é fixo no template. Isso impede duas stacks na mesma conta e região.
 
 <Note>
-  O `GSI1` tem dois usos: a lista de pedidos do fotógrafo e a fila de reconciliação das exclusões de evento. A tabela não tem TTL configurado.
+  O `GSI1` tem dois usos principais: a lista de pedidos do fotógrafo e a fila de reconciliação das exclusões de evento. Também guarda entradas de entregas e de tentativas de pagamento. A tabela tem TTL no atributo `ttl`, usado só para limpar as marcas de notificação de pagamento (`WEBHOOK#`).
 </Note>
 
 O modelo lógico está em [Modelo de dados](/developers/architecture/data-model).
@@ -197,7 +205,7 @@ O bucket precisa da fila para configurar a notificação, e a política da fila 
 
 ## Observabilidade provisionada
 
-- Um log group por função, sete no total, com retenção de 14 dias.
+- Um log group por função, nove no total, com retenção de 14 dias.
 - Dois alarmes, um para cada DLQ. Cada um dispara quando há ao menos uma mensagem visível, avaliado a cada minuto.
 - Um tópico SNS que recebe os alarmes, com uma assinatura por e-mail. O endereço vem do parâmetro obrigatório `AlarmEmail`, e a assinatura só passa a valer depois que o destinatário confirma a inscrição.
 

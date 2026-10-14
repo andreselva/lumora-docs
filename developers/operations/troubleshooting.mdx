@@ -122,7 +122,7 @@ O authorizer exige o scope `aws.cognito.signin.user.admin`, presente no access t
 
 ### 403 nas rotas do cliente
 
-As rotas `/public/*` não usam JWT. O gateway responde 403 sem invocar a função quando o header `x-access-token` está ausente, malformado ou desconhecido. Quando o link venceu, foi revogado ou substituído, ou o evento não está publicado, a `public-api` responde 403 `ACCESS_DENIED`. Veja [Acesso público do cliente](/developers/flows/public-client-access#erros).
+As rotas `/public/*` não usam JWT. Sem o header `x-access-token`, o gateway responde 401 sem invocar o authorizer nem a função. Com um token malformado ou desconhecido, o authorizer recusa e o gateway responde 403. Quando o link venceu, foi revogado ou substituído, ou o evento não está publicado, a `public-api` responde 403 `ACCESS_DENIED`. Veja [Acesso público do cliente](/developers/flows/public-client-access#erros).
 
 ### 404 em uma rota que existe no código
 
@@ -135,6 +135,26 @@ O recurso pertence a outro fotógrafo, ou o id tem formato inválido. As duas si
 ### `GET /me` responde 404
 
 O usuário existe no Cognito, mas não tem perfil no DynamoDB. A página **Minha conta** chama `POST /me/bootstrap` automaticamente. Veja [Criação do perfil](/developers/flows/account-bootstrap).
+
+## Pagamento
+
+### O pedido não sai de `PENDING_PAYMENT` depois de pagar
+
+Quem move o pedido é o webhook, nunca o retorno do navegador. Confira, no log group do `payment-webhook`, se a notificação chegou:
+
+- **Nada no log.** A notificação não chegou. Com o gateway fake, a página `/dev/fake-checkout` entrega a notificação ao webhook depois de aprovar ou recusar; confira o resultado que ela mostra. Nenhuma função reconcilia pagamentos perdidos.
+- **`Notificação de pagamento com assinatura inválida` (401).** O segredo do SSM que assina difere do que confere, ou o parâmetro foi trocado há menos de 5 minutos (cache do segredo). Veja [Pagamento e entrega](/developers/flows/payment-and-delivery#segredo-da-assinatura).
+- **`Notificação de pagamento sem tentativa correspondente`.** A referência não é uma tentativa aberta com este gateway.
+- **`Transição de pagamento recusada`.** O gateway informou um estado que a tentativa não aceita, como "recusado" depois de "pago".
+- **Falha ao ler o segredo.** O parâmetro `FakePaymentSecretParameter` não existe na conta e região. Crie-o com `scripts/create-fake-payment-secret.sh`.
+
+### O pedido está em `REVIEW`
+
+Um pagamento aprovado não fecha com o pedido. O log `Pedido em análise: pagamento não fecha com o pedido` traz o `reason`: `AMOUNT_MISMATCH` (valor ou moeda diferentes) ou `PAID_AFTER_CANCEL` (pago depois do cancelamento). Nenhum código tira o pedido desse estado, e nenhuma entrega é criada para ele.
+
+### `POST /public/payment/{orderId}` responde 409
+
+`CUSTOMER_REQUIRED` indica que o evento não tem cliente vinculado. `ORDER_NOT_PAYABLE` indica que o pedido não está mais em `PENDING_PAYMENT`. `CONFLICT` indica que outra chamada ainda cria o mesmo checkout: repetir resolve.
 
 ## Exclusões
 

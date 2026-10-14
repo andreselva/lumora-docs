@@ -49,7 +49,7 @@ O `sub` do Cognito faz parte de toda chave. A partição do evento carrega o don
 
 - O `README.md` descreve capacidade provisionada. O template usa capacidade sob demanda (`PAY_PER_REQUEST`), e o teste `tests/infra-template.test.ts` verifica isso.
 - O `README.md` atribui ao `GSI1` a consulta de pedidos por fotógrafo e prevê um `GSI2` esparso para pedidos pendentes. O `GSI1` tem dois usos: a lista de pedidos e a reconciliação de exclusões de evento, na partição `EVENT_DELETION#PENDING`. O `GSI2` não existe.
-- O `README.md` lista padrões de chave para webhooks de pagamento. Eles não existem no código. Tokens de link, seleção e pedidos existem e estão em [Modelo de dados](/developers/architecture/data-model).
+- O `README.md` lista padrões de chave para webhooks de pagamento. No código, a marca de cada notificação é `WEBHOOK#{gateway}#{id}`, com TTL. Tokens de link, seleção, pedidos, tentativas de pagamento e entregas existem e estão em [Modelo de dados](/developers/architecture/data-model).
 
 ## Alternativas
 
