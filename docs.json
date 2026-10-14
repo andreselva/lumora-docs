@@ -48,6 +48,12 @@
             ]
           },
           {
+            "group": "Clientes",
+            "pages": [
+              "user/customers/manage-customers"
+            ]
+          },
+          {
             "group": "Pedidos",
             "pages": [
               "user/orders/view-orders"

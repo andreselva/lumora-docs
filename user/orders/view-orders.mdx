@@ -24,11 +24,15 @@ Se a lista for longa, clique em **Carregar mais pedidos** no fim da página. Sem
 | Estado | Significado |
 | --- | --- |
 | **Aguardando pagamento** | O pedido tem valor a pagar e ainda não foi pago. |
+| **Pago** | O pagamento foi confirmado com o valor do pedido. |
+| **Em análise** | Houve um pagamento que não confere com o pedido: de valor diferente, ou feito depois de o pedido ser cancelado. Por segurança, o Lumora não segue com o pedido, e hoje não há como resolvê-lo por esta página. |
 | **Confirmado** | O pedido não tem valor a pagar, porque as fotos escolhidas estão incluídas em um pacote que você já recebeu por fora. |
 | **Cancelado** | O pedido foi cancelado. |
 
 <Warning>
-  Hoje a página **Pedidos** é somente de consulta. Você não pode confirmar, cancelar ou editar um pedido por ela, e o Lumora não processa pagamentos. Um pedido com valor a pagar permanece em **Aguardando pagamento**, e a tela do cliente não oferece uma ação para cancelá-lo.
+  Hoje a página **Pedidos** é somente de consulta. Você não pode confirmar, cancelar ou editar um pedido por ela, e a tela do cliente não oferece uma ação para cancelá-lo.
+
+  O pagamento pelo Lumora ainda está em fase de testes: nenhum provedor de pagamento real está ligado, então o Lumora não cobra de verdade. Para o cliente poder tentar pagar, o evento precisa ter um [cliente vinculado](/user/customers/manage-customers#vincular-o-cliente-a-um-evento). Combine o recebimento diretamente com o cliente.
 </Warning>
 
 ## Pedido e pacote
