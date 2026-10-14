@@ -1,0 +1,111 @@
+---
+title: "Compartilhar um evento com o cliente"
+description: "Defina o pacote, publique o evento e gere o link que o cliente usa para ver as fotos e escolher as que quer."
+---
+
+O cliente não precisa de conta. Ele recebe um link, abre as galerias do evento no navegador e escolhe as fotos. Para chegar a esse link, você passa por três etapas na página do evento:
+
+1. Definir o **Pacote**.
+2. **Publicar** o evento.
+3. Gerar o **Link do cliente**.
+
+Só as fotos que já estão **Prontas** aparecem para o cliente. Antes de compartilhar, confira o [andamento do processamento](/user/photos/track-processing).
+
+## Definir o pacote
+
+O pacote é o valor combinado com o cliente. Ele vale para o evento inteiro, somando todas as galerias. Sem pacote, o Lumora não gera o link.
+
+<Steps>
+  <Step title="Abra a seção Pacote">
+    Na página do evento, vá até a seção **Pacote**.
+  </Step>
+  <Step title="Preencha os valores">
+    | Campo | O que informar |
+    | --- | --- |
+    | **Valor do pacote (R$)** | Maior que zero e até R$ 100.000,00. Exemplo: `200,00`. |
+    | **Fotos incluídas** | Número inteiro de 1 a 10.000, somado entre todas as galerias. |
+    | **Cobrança do pacote** | **Já recebi por fora** ou **Cobrar pela plataforma**. |
+    | **Vender fotos adicionais** | Ligado, o cliente pode escolher mais fotos do que as incluídas. |
+    | **Valor por foto adicional (R$)** | Aparece com **Vender fotos adicionais** ligado. É cobrado por foto escolhida além das incluídas. |
+  </Step>
+  <Step title="Salve">
+    Clique em **Salvar pacote**.
+  </Step>
+</Steps>
+
+### Como a cobrança afeta o pedido
+
+- **Já recebi por fora**: você já recebeu o valor do pacote. O pedido do cliente cobra só as fotos adicionais. Se ele escolher apenas as fotos incluídas, o pedido não tem valor a pagar.
+- **Cobrar pela plataforma**: o pedido do cliente soma o pacote e as fotos adicionais.
+
+### Com e sem fotos adicionais
+
+- Com **Vender fotos adicionais** ligado, o cliente pode escolher quantas fotos quiser. O que passar das incluídas é cobrado pelo valor por foto adicional.
+- Com a opção desligada, o cliente escolhe no máximo as fotos incluídas. Ao chegar ao limite, ele precisa desmarcar uma foto para escolher outra.
+
+<Warning>
+  O pacote só pode ser alterado até o primeiro pedido do evento. A partir daí, os campos ficam somente para leitura e aparece o aviso **O pacote não pode mais ser alterado**. Isso vale mesmo que o pedido seja cancelado depois.
+</Warning>
+
+## Publicar o evento
+
+Todo evento começa como rascunho. Enquanto estiver assim, o cliente não consegue abrir as galerias, mesmo com o link.
+
+<Steps>
+  <Step title="Salve as alterações pendentes">
+    Se você alterou o nome ou marcou fotos para exclusão em uma galeria, salve ou descarte antes. A publicação libera ao cliente o que está salvo, e o Lumora avisa quando há alterações pendentes.
+  </Step>
+  <Step title="Publique">
+    Clique em **Publicar evento**, no alto da página, e confirme em **Publicar evento**.
+  </Step>
+</Steps>
+
+Depois de publicado, o evento não volta a ser rascunho, e o botão **Publicar evento** deixa de aparecer.
+
+## Gerar o link do cliente
+
+<Steps>
+  <Step title="Abra o diálogo">
+    Na seção **Link do cliente**, clique em **Compartilhar**.
+  </Step>
+  <Step title="Confira o pacote">
+    O diálogo resume o pacote do evento. Se o pacote não estiver definido, o Lumora pede para preenchê-lo antes.
+  </Step>
+  <Step title="Escolha a validade">
+    Escolha de 1 a 5 dias. O padrão é 3 dias, contados a partir de agora.
+  </Step>
+  <Step title="Gere o link">
+    Clique em **Gerar link**. Se já existir um link ativo, o botão se chama **Gerar novo link**.
+  </Step>
+  <Step title="Copie e guarde">
+    Clique em **Copiar link** e envie ao cliente. Depois, clique em **Já guardei o link**.
+  </Step>
+</Steps>
+
+<Warning>
+  O link aparece uma única vez, logo depois de gerado, e o diálogo só fecha pelo botão **Já guardei o link**. Se perder o link, gere outro.
+</Warning>
+
+<Warning>
+  Hoje o endereço do link ainda é configurado para o ambiente local: ele começa com `http://localhost:5173`. Em um navegador de outra pessoa, esse endereço aponta para o computador dela, e não para o Lumora. Enquanto o endereço público não for configurado na instalação, o link só funciona para quem usa o Lumora no mesmo computador, e o compartilhamento com clientes de verdade ainda não está completo.
+</Warning>
+
+Um único link dá acesso a todas as galerias do evento. A seção **Link do cliente** mostra o estado dele:
+
+| Estado | Significado |
+| --- | --- |
+| **Sem link** | Nenhum link foi gerado para este evento. |
+| **Ativo** | O link funciona até a data e a hora mostradas. |
+| **Expirado** | O prazo terminou. Gere um novo link para o cliente voltar. |
+
+Um evento tem sempre um único link válido. Ao gerar um novo, o anterior deixa de funcionar, e o Lumora avisa isso antes de você confirmar. Quem tem o link antigo precisa do novo.
+
+<Note>
+  A validade do link não é a **Data de expiração** do evento. A data de expiração é apenas registrada. Quem decide até quando o cliente consegue abrir as galerias é a validade que você escolhe ao gerar o link.
+</Note>
+
+## O que o cliente vê se o link não funciona
+
+Se o link estiver vencido, tiver sido substituído por outro ou se o evento ainda não estiver publicado, o cliente vê a mensagem **Este link não está disponível**. Ela não diz qual foi o motivo. Se a causa for o prazo ou a substituição, gere um novo link e envie ao cliente.
+
+Para saber como o cliente escolhe as fotos e como você acompanha o resultado, veja [Acompanhar a seleção do cliente](/user/events/client-selection).
