@@ -7,6 +7,8 @@ description: "Como o fotógrafo entra, como o token chega à API e de onde vem a
 
 Identificar o fotógrafo em cada requisição e garantir que ele só alcance os próprios dados.
 
+Esta página trata do fotógrafo. O cliente não tem conta e acessa por um token de link, validado por outro authorizer. Veja [Acesso público do cliente](/developers/flows/public-client-access).
+
 ## Componentes
 
 | Componente | Papel |
@@ -116,5 +118,4 @@ O frontend trata a troca de usuário no mesmo navegador como um risco:
 
 ## O que não está implementado
 
-- **Acesso do cliente por token de galeria.** O frontend tem a rota `/g/:token` e um contexto para o token, e o CORS da API libera o header `x-gallery-token`. Não há authorizer, rota nem tabela de tokens.
 - **Login social, MFA e recuperação de conta personalizada.** O User Pool usa a configuração básica.

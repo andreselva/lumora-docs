@@ -57,10 +57,11 @@ O caminho normal e o reconciliador convergem para o mesmo estado final: nenhuma 
 
 ## Como a exclusão fica recuperável desde o início
 
-<code>DynamoDbEventRepository.delete</code> não apaga o evento e depois tenta lembrar que havia uma limpeza pendente. Ele faz as duas alterações na mesma transação:
+<code>DynamoDbEventRepository.delete</code> não apaga o evento e depois tenta lembrar que havia uma limpeza pendente. Ele faz as alterações na mesma transação:
 
 1. remove o item ativo <code>EVENT</code>;
-2. cria um item <code>EVENT_DELETION</code>.
+2. cria um item <code>EVENT_DELETION</code>;
+3. se o evento tem um link do cliente, remove o registro <code>PUBLIC_TOKEN#</code> dele.
 
 O tombstone começa com os campos de controle abaixo:
 
@@ -81,6 +82,8 @@ SK = EVENT_DELETION#<eventId>
 ```
 
 A transação garante que o evento não fique invisível para o usuário sem que exista um registro persistente dizendo que a limpeza ainda está pendente.
+
+O registro do token sai junto com o evento. Um link gerado entre a leitura do evento e a transação pode sobrar como registro órfão, mas não autoriza nada: o direito de acesso do cliente é negado quando o evento não existe. Veja [Acesso público do cliente](/developers/flows/public-client-access).
 
 ### A primeira conferência
 

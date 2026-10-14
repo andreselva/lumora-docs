@@ -18,15 +18,19 @@ Uma função por endpoint multiplica recursos, permissões e cold starts. Uma fu
 
 Criar uma função por **contexto de execução**, e não por endpoint. Uma função nova só se justifica quando o gatilho, as permissões, o timeout ou a memória são diferentes.
 
-Hoje são três:
+Hoje são sete:
 
 | Função | Gatilho | Por que é separada |
 | --- | --- | --- |
-| `studio-api` | HTTP API | Requisições curtas, com leitura e escrita de metadados. |
+| `studio-api` | HTTP API, JWT do Cognito | Requisições curtas do fotógrafo, com leitura e escrita de metadados e acesso de upload. |
+| `public-api` | HTTP API, authorizer do cliente | Outro público e outro conjunto de permissões: sem S3, sem filas. |
+| `public-access-authorizer` | Lambda authorizer | Reconhece o token do link. Só precisa de `GetItem`. |
 | `postConfirmation` | Cognito | Outro gatilho. Só precisa de `PutItem`. |
 | `imageProcessor` | SQS | Mais memória e tempo, binário nativo, permissão de leitura de objetos. |
+| `deletePhotosGallery` | SQS | Remove objetos nos dois buckets e itens do DynamoDB, com limites próprios. |
+| `eventDeletionReconciler` | Agendamento | Roda a cada 15 minutos e só reenfileira trabalho. |
 
-Dentro da `studio-api`, o roteamento é um `switch` sobre `event.routeKey`. As rotas continuam declaradas uma a uma no template SAM.
+Dentro da `studio-api` e da `public-api`, o roteamento é um `switch` sobre `event.routeKey`. As rotas continuam declaradas uma a uma no template SAM.
 
 Não há framework web nem contêiner de injeção de dependência. As dependências são instanciadas no escopo do módulo.
 
@@ -35,18 +39,18 @@ Não há framework web nem contêiner de injeção de dependência. As dependên
 **Benefícios**
 
 - Menos recursos para manter e um único bundle por contexto.
-- Permissões mínimas por contexto. A `studio-api` não lê bytes de fotos; o `imageProcessor` não lista nem exclui itens.
+- Permissões mínimas por contexto. A `studio-api` não lê bytes de fotos; a `public-api` não tem acesso ao S3; o `imageProcessor` não lista nem exclui itens do DynamoDB.
 - Declarar as rotas no template mantém autorização e limites configuráveis por rota, mesmo com uma só função.
 - Sem camadas de framework no caminho da requisição.
 
 **Custos**
 
-- Cada rota é declarada em dois lugares: no template e no `switch`. Uma rota presente em só um deles não funciona.
-- O handler da `studio-api` cresce a cada rota, com a lista de dependências instanciadas à mão.
+- Cada rota é declarada em dois lugares: no template e no `switch` do handler. Uma rota presente em só um deles não funciona.
+- Os handlers da `studio-api` e da `public-api` crescem a cada rota, com a lista de dependências instanciadas à mão.
 - Todas as rotas compartilham memória, timeout e o conjunto de permissões da função.
 
 ## Alternativas
 
 O `README.md` registra a intenção de dividir o template em nested stacks quando ele passar de cerca de mil linhas, e de avaliar Step Functions antes de qualquer servidor caso surja um processamento que não caiba em Lambda.
 
-O `README.md` prevê outras quatro funções: `galleryAuthorizer`, `galleryApi`, `paymentWebhook` e `paymentReconciler`. Nenhuma existe atualmente.
+O `README.md` prevê quatro funções além das de hoje: `galleryAuthorizer`, `galleryApi`, `paymentWebhook` e `paymentReconciler`. As duas primeiras existem com os nomes `public-access-authorizer` e `public-api`. As de pagamento não existem.

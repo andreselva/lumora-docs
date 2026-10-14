@@ -5,7 +5,7 @@ description: "A tabela única do DynamoDB: entidades, chaves, padrões de acesso
 
 O Lumora guarda todos os metadados em uma única tabela DynamoDB, `lumora-app`. Os arquivos ficam no S3; a tabela guarda apenas referências lógicas a eles.
 
-As chaves são montadas em `services/api/src/repositories/dynamodb/keys.ts`.
+As chaves são montadas em `services/api/src/infra/dynamodb/keys.ts`.
 
 ## Estrutura da tabela
 
@@ -13,7 +13,7 @@ As chaves são montadas em `services/api/src/repositories/dynamodb/keys.ts`.
 | --- | --- |
 | Chave de partição | `PK`, string |
 | Chave de ordenação | `SK`, string |
-| Índice global | `GSI1`, com `GSI1PK` e `GSI1SK`, projeção completa. A exclusão de eventos usa a partição esparsa `EVENT_DELETION#PENDING` para localizar reconciliações vencidas. |
+| Índice global | `GSI1`, com `GSI1PK` e `GSI1SK`, projeção completa. Dois usos: a lista de pedidos do fotógrafo e a partição esparsa `EVENT_DELETION#PENDING`, que localiza reconciliações de exclusão vencidas. |
 | TTL | Não configurado |
 | Modo de capacidade | Sob demanda |
 
@@ -21,8 +21,10 @@ As chaves são montadas em `services/api/src/repositories/dynamodb/keys.ts`.
 
 Há duas famílias de partição:
 
-- a **partição do fotógrafo**, `USER#{sub}`, com o perfil e os eventos;
+- a **partição do fotógrafo**, `USER#{sub}`, com o perfil, os eventos e os tombstones de exclusão de evento;
 - a **partição do evento**, `USER#{sub}#EVENT#{eventId}`, com as galerias, as fotos e as marcas de deduplicação daquele evento.
+
+Quatro tipos de item ficam fora dessas famílias, porque são alcançados por um identificador que não carrega o `sub`: o token do link do cliente, a seleção do cliente e o pedido com seus itens.
 
 | Entidade | `PK` | `SK` |
 | --- | --- | --- |
@@ -31,6 +33,12 @@ Há duas famílias de partição:
 | Galeria | `USER#{sub}#EVENT#{eventId}` | `GALLERY#{galleryId}` |
 | Foto | `USER#{sub}#EVENT#{eventId}` | `PHOTO#{galleryId}#{photoId}` |
 | Fingerprint | `USER#{sub}#EVENT#{eventId}` | `FP#{galleryId}#{sha256}` |
+| Token do link do cliente | `PUBLIC_TOKEN#{sha256}` | `PUBLIC_GALLERY` |
+| Foto selecionada | `GALLERY#{galleryId}` | `SEL#{photoId}` |
+| Pedido | `ORDER#{orderId}` | `META` |
+| Item de um pedido | `ORDER#{orderId}` | `ITEM#{assemblyId}#{photoId}` |
+| Tombstone de exclusão de evento | `USER#{sub}` | `EVENT_DELETION#{eventId}` |
+| Lease de exclusão de fotos escolhidas | `USER#{sub}#EVENT#{eventId}` | `DELETE_SELECTED#{operationId}#{step}` |
 
 ```mermaid
 erDiagram
@@ -38,6 +46,10 @@ erDiagram
   EVENT ||--|{ GALLERY : "contém"
   GALLERY ||--o{ PHOTO : "contém"
   PHOTO ||--|| FINGERPRINT : "deduplicada por"
+  EVENT ||--o| ACCESS_TOKEN : "tem no máximo um"
+  GALLERY ||--o{ SELECTION : "recebe"
+  EVENT ||--o{ ORDER : "gera"
+  ORDER ||--o{ ORDER_ITEM : "contém"
 ```
 
 ### Exemplo
@@ -75,6 +87,11 @@ Os repositórios de galeria ainda conferem o atributo `ownerId` do item como seg
 | Contar fotos do evento por estado | `Query` na partição do evento com `begins_with(SK, 'PHOTO#')`, projetando só `status`, todas as páginas |
 | Ler uma foto | `GetItem` na partição do evento |
 | Verificar duplicidade de arquivo | escrita condicional do item `FP#...` |
+| Reconhecer o token do cliente | `GetItem` em `PUBLIC_TOKEN#{sha256}` / `PUBLIC_GALLERY` |
+| Listar a seleção de uma galeria | `Query` em `GALLERY#{galleryId}` com `begins_with(SK, 'SEL#')` |
+| Ler um pedido | `GetItem` em `ORDER#{orderId}` / `META` |
+| Listar pedidos do fotógrafo | `Query` no `GSI1` com `GSI1PK = USER#{sub}` e `begins_with(GSI1SK, 'ORDER#')` |
+| Achar exclusões de evento vencidas | `Query` no `GSI1` com `GSI1PK = EVENT_DELETION#PENDING` e `GSI1SK` até agora |
 
 Duas escolhas de ordenação seguem dos ULIDs:
 
@@ -103,11 +120,15 @@ Todas as listagens são `Query`. Não há `Scan` em nenhum repositório.
 | `galleryCount` | Número de galerias. Começa em 1, por causa da galeria principal. |
 | `registeredPhotoCount` | Número de fotos já registradas no evento. É mantido durante o registro e copiado para o tombstone como informação da exclusão. |
 | `photoCount` | Contador legado, gravado como 0. Não sai na API. Veja a seção sobre contadores. |
-| `orderCount` | Gravado como 0. Não há pedidos implementados. |
+| `orderCount` | Pedidos abertos no evento. Sobe com cada pedido e nunca desce; acima de zero, trava o pacote. |
+| `package` | Mapa com `priceCents`, `includedPhotos`, `extraPhotoPriceCents` e `billing`. Ausente até o fotógrafo definir o pacote. |
+| `accessTokenHash` | SHA-256 do token do link atual. Nunca sai na API. |
+| `accessLinkCreatedAt`, `accessLinkExpiresAt` | Criação e fim da validade do link atual, em milissegundos desde a época Unix |
+| `accessLinkRevokedAt` | Fim antecipado do link, em milissegundos. Lido pelas regras de acesso; hoje nenhum código o grava. |
 
 ### Galeria
 
-`id`, `eventId`, `ownerId`, `name`, `isDefault`, `createdAt`, `updatedAt`.
+`id`, `eventId`, `ownerId`, `name`, `isDefault`, `createdAt`, `updatedAt`, mais `status` (`ACTIVE` ou `DELETING`; ausente equivale a `ACTIVE`) e, durante a exclusão, `deletingAttemptId` e `deletingLeaseUntil` (lease do worker, em milissegundos desde a época Unix).
 
 `isDefault` é `true` somente na galeria criada junto com o evento.
 
@@ -125,12 +146,33 @@ Todas as listagens são `Query`. Não há `Scan` em nenhum repositório.
 | `processingAttemptId` | Tentativa de processamento em andamento |
 | `processingLeaseUntil` | Validade da tentativa em andamento, em milissegundos desde a época Unix |
 | `completedAttemptId` | Tentativa que concluiu o processamento |
+| `failureReason` | Motivo da falha, quando o status é `FAILED` |
+| `previewWidth`, `previewHeight` | Dimensões da preview publicada. Ausentes em fotos publicadas antes de existirem |
+| `reprocessRequestId`, `reprocessAttemptId` | Último pedido de reprocessamento aplicado e a tentativa que o aplicou |
 
-Os quatro últimos atributos controlam a concorrência do processamento.
+`sourceVersionId`, `processingAttemptId`, `processingLeaseUntil` e `completedAttemptId` controlam a concorrência do processamento. Os campos de reprocessamento controlam a idempotência dele.
+
+### Token do link do cliente
+
+`id` (o `sub` do dono), `eventId`, `tokenHash`, `createdAt`, `updatedAt` e `expiresAt`. A chave é o hash do token, o que permite resolver dono e evento a partir do token apresentado pelo cliente, sem JWT. Existe no máximo um por evento: gerar um novo link apaga o anterior na mesma transação. Veja [Pacote, publicação e link do cliente](/developers/flows/event-publishing-and-access-link).
 
 ### Fingerprint
 
 `photoId` e `ownerId`. O item existe só para garantir unicidade: a sua chave contém o hash, e o seu conteúdo aponta para a foto já registrada.
+
+### Seleção do cliente
+
+Um item por foto selecionada, na partição `GALLERY#{galleryId}`, com `SK` `SEL#{photoId}`. Atributos: `ownerId`, `eventId`, `galleryId`, `photoId` e `selectedAt`. A chave não leva o `sub` do fotógrafo: a galeria só é endereçada depois de encontrada no evento do link.
+
+O item do evento guarda o estado agregado da seleção:
+
+| Atributo | Significado |
+| --- | --- |
+| `selectionCount` | Fotos selecionadas no evento, somando as galerias. |
+| `selectionRevision` | Só cresce, a cada mudança da seleção. Cerca leituras coerentes. |
+| `activeOrderId` | Pedido ativo. Enquanto existir, a seleção está congelada. |
+
+Veja [Seleção de fotos](/developers/flows/photo-selection).
 
 ## Campos de concorrência da foto
 
@@ -139,23 +181,44 @@ Os quatro últimos atributos controlam a concorrência do processamento.
 | `sourceVersionId` | Na primeira reivindicação | Nunca | Garante que só uma versão do objeto seja processada, mesmo que o arquivo seja enviado de novo para a mesma chave. |
 | `processingAttemptId` | A cada reivindicação | Ao concluir | Identifica quem é o dono atual do processamento. Uma tentativa antiga não consegue concluir. |
 | `processingLeaseUntil` | A cada reivindicação | Ao concluir | Permite que outra tentativa assuma se a atual morrer sem concluir. |
-| `completedAttemptId` | Ao concluir | Nunca | Aponta para a pasta dos derivados publicados e torna a conclusão repetível. |
+| `completedAttemptId` | Ao concluir, e de novo a cada reprocessamento bem-sucedido | Nunca | Aponta para a pasta dos derivados publicados e torna a conclusão repetível. |
+| `reprocessRequestId` | Ao concluir ou rejeitar um reprocessamento | Nunca | Impede que o mesmo pedido de reprocessamento seja aplicado duas vezes. |
+| `reprocessAttemptId` | Ao concluir ou rejeitar um reprocessamento | Nunca | Reconhece a reentrega da tentativa que já terminou. |
 
 `processingLeaseUntil` é um número comparado em expressões condicionais. Não é um atributo de TTL: o DynamoDB não remove nada quando ele vence.
 
+O lease de exclusão de fotos escolhidas usa um item à parte: `DELETE_SELECTED#{operationId}#{step}` na partição do evento, com `deletingOperationId`, `deletingAttemptId` e `deletingLeaseUntil`. Ele existe só enquanto um passo está em andamento e é apagado ao fim dele. Veja [Exclusão de fotos e galerias](/developers/flows/photo-and-gallery-deletion).
+
 O uso desses campos está em [Processamento de imagens](/developers/flows/image-processing).
+
+## Pedidos
+
+O pedido tem uma partição própria, `ORDER#{orderId}`, e uma entrada no GSI1 do fotógrafo depois de publicado.
+
+| Item | `PK` | `SK` | Conteúdo |
+| --- | --- | --- | --- |
+| Pedido | `ORDER#{orderId}` | `META` | `ownerId`, `eventId`, `status`, `currency`, retrato do pacote (`package`), `quote`, `assembly`, datas. Depois de publicado, também `GSI1PK` = `USER#{sub}` e `GSI1SK` = `ORDER#{createdAt}`. |
+| Item da montagem | `ORDER#{orderId}` | `ITEM#{assemblyId}#{photoId}` | `galleryId` e `photoId`. Os itens de cada montagem ficam separados e nunca são apagados. |
+
+O pedido guarda `ownerId` e `eventId`, e quem o lê confere os dois. Os campos do evento que o pedido usa (`activeOrderId`, `orderCount`, `selectionRevision`) estão em [Seleção de fotos](/developers/flows/photo-selection) e [Pedidos](/developers/flows/orders).
 
 ## Escritas transacionais
 
-Cinco operações gravam mais de um item e usam `TransactWriteItems`:
+As operações abaixo gravam mais de um item e usam `TransactWriteItems`:
 
 | Operação | Itens envolvidos | Invariante protegida |
 | --- | --- | --- |
 | Criar evento | evento e galeria principal | Não existe evento sem galeria principal. |
 | Criar galeria | galeria e `galleryCount` do evento | A galeria só é criada se o evento existir. |
-| Excluir galeria | galeria e `galleryCount` do evento | A galeria principal não é excluída. |
+| Excluir galeria | galeria e `galleryCount` do evento | A galeria principal não é excluída. Acontece depois de as fotos serem removidas. |
+| Remover foto | foto, fingerprint, seleção e contadores do evento | A vaga da seleção é devolvida junto com a foto. Veja [Exclusão de fotos e galerias](/developers/flows/photo-and-gallery-deletion). |
 | Registrar foto | fingerprint, foto, `registeredPhotoCount` do evento e verificação da galeria | Um arquivo é registrado uma vez por galeria, e só em galeria existente. |
-| Excluir evento | evento ativo e tombstone `EVENT_DELETION` | A remoção visível do evento e o registro da limpeza pendente acontecem atomicamente. |
+| Excluir evento | evento ativo, tombstone `EVENT_DELETION` e token do link, se houver | A remoção visível do evento, o registro da limpeza pendente e o fim do acesso do cliente acontecem atomicamente. |
+| Gerar link do cliente | evento, token novo e token anterior | O evento tem um único link válido, e só com pacote definido. |
+| Selecionar foto | evento, verificação da galeria, verificação da foto e item da seleção | A vaga da seleção só é ocupada se houver teto livre, sem pedido ativo e com o link válido. O contador sobe junto com o item. Veja [Seleção de fotos](/developers/flows/photo-selection). |
+| Desmarcar foto | evento, verificação da galeria e item da seleção | O contador só desce junto com a remoção do item. |
+| Abrir pedido | evento e pedido | Um pedido ativo por evento, com a seleção congelada e o pacote travado. Veja [Pedidos](/developers/flows/orders). |
+| Montar, publicar, descartar e cancelar pedido | pedido, itens copiados e, conforme o caso, evento | Cada página de itens avança o cursor da montagem na mesma escrita que os grava. Descartar e cancelar também liberam `activeOrderId`. |
 
 As transições do processamento, ao contrário, usam um único `UpdateItem` condicional sobre a foto, sem transação e sem tocar no evento.
 

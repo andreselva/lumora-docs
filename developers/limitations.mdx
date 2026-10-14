@@ -18,24 +18,23 @@ Os itens estão em quatro grupos:
 
 | Item | Situação |
 | --- | --- |
-| Exclusão de fotos | A tela marca fotos e chama `POST .../photos/delete`. A rota não existe na API nem no template. `IPhotoStorage.deletePhoto` existe, mas a implementação no S3 é vazia. |
-| Exclusão de galeria | A API implementa. Não há controle na tela. |
-| Publicar e arquivar evento | Implementado na entidade e no repositório. Sem caso de uso, rota ou tela. Todo evento permanece em `DRAFT`. |
+| Exclusão de galeria | A API implementa, com limpeza assíncrona das fotos. Não há controle na tela. |
+| Arquivar evento | Implementado na entidade e no repositório. Sem caso de uso, rota ou tela. Nenhum evento chega a `ARCHIVED`. |
 | Pausar e retomar o envio | Implementado no `UploadManager` e exposto pelo hook. Nenhum componente chama. |
-| Páginas **Pedidos** e **Configurações** | Itens de menu e rotas sem conteúdo. |
+| Página **Configurações** | Item de menu e rota sem conteúdo. |
+| Pedidos | A página lista os pedidos, somente leitura. Não há detalhe do pedido nem ação sobre ele. |
 | Página inicial do Studio | Mostra apenas o resultado de `GET /health`. |
-| Galeria do cliente | Só o layout e o contexto do token em `/g/:token`. |
 
 ### Fotos
 
 | Item | Situação |
 | --- | --- |
-| URL de miniatura para fotos sem miniatura | `ListGalleryPhotos` gera URL assinada para toda foto, em qualquer estado. Para fotos sem derivado, a URL aponta para um objeto inexistente. O comentário em `toPhotoDto` indica a intenção de devolver `null` nesses casos. |
-| Fotos em `FAILED` não têm recuperação | Não há reprocessamento. Selecionar o mesmo arquivo devolve `upload: null`, por causa do fingerprint. |
+| URL de derivado para fotos sem derivado | `ListGalleryPhotos`, a listagem do fotógrafo, monta as URLs de miniatura e preview para toda foto, em qualquer estado. Para fotos sem derivado, a URL aponta para um objeto inexistente e a imagem aparece quebrada. A lista do cliente só devolve fotos `AVAILABLE`. |
+| Reprocessar não troca o arquivo | O reprocessamento reaproveita o original fixado. Uma foto `FAILED` por arquivo inválido falha de novo. Selecionar o mesmo arquivo devolve `upload: null`, por causa do fingerprint. |
+| Derivados não se atualizam sozinhos | Mudar a marca d'água ou os parâmetros dos derivados só afeta fotos novas ou reprocessadas. |
 | Fotos em `PENDING_UPLOAD` abandonadas | Não há expiração nem limpeza. Elas continuam contando no resumo e em `registeredPhotoCount`. |
 | Mensagens na DLQ | Sem recuperação automática. O redrive depende da correção da causa e da existência da versão do original. A expiração da mensagem não altera o estado da foto. |
-| Derivados órfãos | Tentativas interrompidas deixam arquivos em `attempts/{attemptId}/`. Não há limpeza. |
-| Preview não utilizada | É gerada e gravada, mas nenhuma rota a serve. |
+| Derivados órfãos | Tentativas interrompidas e a pasta anterior de uma foto reprocessada deixam arquivos em `attempts/{attemptId}/`. Não há limpeza. |
 | Só JPEG | RAW, TIFF, PNG e HEIC são recusados. |
 | Nome do arquivo não exibido | A grade usa "Foto N". O schema reduzido do frontend descarta o campo `name` da resposta. |
 | Estado `ARCHIVED` | Existe no enum e nos contratos. Nenhum código leva uma foto a ele. |
@@ -44,8 +43,10 @@ Os itens estão em quatro grupos:
 
 | Item | Situação |
 | --- | --- |
-| Exclusão de galeria sem cascata | A API exclui a galeria sem verificar nem remover suas fotos e fingerprints. |
-| `expiresAt` sem efeito | O valor é armazenado e editável. Nenhum código o usa. |
+| Exclusão de fotos e galerias sem reconciliador | Só a exclusão de evento tem reconciliador. Se a cadeia de mensagens de uma galeria se perder, ela permanece em `DELETING` até a operação ser repetida. |
+| `expiresAt` sem efeito | O valor é armazenado e editável. Nenhum código o usa. O acesso do cliente segue o prazo do link, não este campo. |
+| Revogação do link sem escritor | `accessLinkRevokedAt` e `revokedAt` são lidos pelas regras de acesso, mas nenhum código os grava. |
+| Registros de token sem expiração física | Sem TTL na tabela, o registro `PUBLIC_TOKEN#` de um link vencido permanece até a substituição do link ou a exclusão do evento. |
 | Edição sem controle de versão | Edições simultâneas de evento ou galeria seguem "a última escrita vence". |
 | Capas | `coverUrl` é aceito pelos schemas do frontend, mas a API não o devolve. |
 | Perfil sem edição | Não há rota para alterar nome ou e-mail. |
@@ -68,21 +69,19 @@ Veja o [ADR-009](/developers/adr/009-derived-photo-counters).
 | Frontend sem hospedagem | Nada no template publica a SPA. |
 | Tabela e bucket sem retenção | Sem `DeletionPolicy` nem `UpdateReplacePolicy`. |
 | Nome fixo da tabela | Impede duas stacks na mesma conta e região. |
-| Alarme sem assinante | O tópico SNS não tem assinatura no template. |
-| Observabilidade mínima | Sem métricas próprias, tracing, dashboard ou alarmes de erro. |
+| Assinatura do alarme depende de confirmação | O tópico SNS tem uma assinatura por e-mail, mas ela só vale depois de o destinatário confirmar a inscrição. |
+| Observabilidade mínima | Métricas próprias só no `imageProcessor`. Sem tracing, dashboard ou alarmes de erro das Lambdas. Os únicos alarmes são os das duas DLQs. |
 | CORS da API aberto | Aceita qualquer origem. |
-| Miniaturas sem CDN | Servidas por URL assinada do S3, válida por 10 minutos. |
+| `PUBLIC_APP_URL` fixo | O template define `http://localhost:5173`. O link do cliente devolvido pela API aponta para esse endereço. |
 
 ### Dívidas técnicas registradas no repositório
 
 | Item | Situação |
 | --- | --- |
 | Contratos duplicados | `packages/contracts` e `services/api/src/contracts` são cópias, protegidas por testes de paridade. O motivo é o build das Lambdas não empacotar pacotes do workspace. |
-| Enum de status duplicado | `PhotoStatus` em `packages/domain` e `PhotoStatusEnum` em `services/api`. |
+| Enum de status duplicado | `PhotoStatusSchema` em `packages/contracts` e `PhotoStatusEnum` em `services/api`. |
 | Contratos temporários no frontend | `studio/galleries/contracts.ts` declara schemas reduzidos, a substituir pelos de `@photos/contracts`. |
-| Mocks desatualizados | Os handlers do MSW para galerias e fotos são anteriores às rotas reais. O comentário em `mocks/handlers/galleries.ts` ainda diz que a API não as expõe. |
-| `lib/clients.ts` sem uso | Clientes com tokens de exemplo, não importados por nenhum módulo. |
-| `packages/domain` sem uso | `Money` e `OrderStatus` não são importados pelo backend nem pelo frontend. |
+| Mocks desatualizados | Os handlers do MSW para galerias e fotos são anteriores às rotas reais. O comentário em `mocks/handlers/galleries.ts` ainda diz que a API não as expõe, e `studio/galleries/contracts.ts` ainda lista a exclusão de fotos como pendente no backend. |
 | Rotas `/me` fora do padrão | Sem controller nem caso de uso, com exceção do SDK tratada na rota. |
 | Navegação com rascunho | A barra lateral e o botão voltar não pedem confirmação quando há alterações não salvas na galeria. |
 
@@ -123,7 +122,7 @@ Cada arquivo de um lote custa uma transação e uma assinatura, em sequência, d
 Itens que o código ou os documentos do repositório apontam como evolução possível. Não são decisões tomadas.
 
 - **Unificar os contratos.** O `README.md` prevê que o backend passe a importar `@photos/contracts` quando o empacotamento das Lambdas suportar dependências do monorepo.
-- **Separar buckets.** O `README.md` descreve buckets distintos para originais e para mídia, com a mídia atrás de um CDN.
+- **Hospedar o frontend.** O `README.md` descreve um bucket `web` atrás do CloudFront. O template já tem o bucket de originais e o de mídia, mas nenhum para a SPA.
 - **Dividir o template.** O `README.md` sugere nested stacks quando o template passar de cerca de mil linhas.
 - **Controle de versão em edições.** O `README.md` sugere um atributo `version` caso edições concorrentes passem a causar perda de dados.
 - **Limpeza de derivados órfãos.** O `README.md` menciona a limpeza futura de arquivos de tentativas interrompidas.
@@ -132,18 +131,15 @@ Itens que o código ou os documentos do repositório apontam como evolução pos
 
 ## Funcionalidades planejadas
 
-O roadmap do `README.md` do repositório `lumora` descreve as fases abaixo. Nenhuma tem implementação no código atual, além do que está indicado.
+O roadmap do `README.md` do repositório `lumora` descreve fases que ainda não têm implementação. Marca d'água, entrega por CloudFront, link do cliente, seleção e pedidos já existem; o que falta está abaixo.
 
 | Funcionalidade | Estado no código |
 | --- | --- |
-| Marca d'água na preview | Não implementado. A preview é gerada sem marca. |
-| Entrega de mídia por CDN | Não implementado. |
-| Link temporário de galeria para o cliente | Apenas a rota e o contexto no frontend, e o header liberado no CORS da API. |
-| Seleção de fotos pelo cliente | Não implementado. |
-| Pedidos e preços | Apenas `Money` e `OrderStatus` em `packages/domain`, sem uso. |
-| Pagamento, webhook e reconciliação | Não implementado. |
+| Pagamento, webhook e reconciliação | Não implementado. O pedido nasce em `PENDING_PAYMENT`, ou `CONFIRMED` quando o valor é zero, mas nada o leva adiante. Não há função de webhook nem de reconciliação. |
 | Download dos originais | Não implementado. |
 | Arquivamento e classes de armazenamento | Não implementado. |
+| Hospedagem do frontend | Não implementado. |
+| Segundo índice (`GSI2`) para pedidos pendentes | Não implementado. O template só declara o `GSI1`. |
 
 ## Divergências entre o README e o código
 
@@ -152,18 +148,15 @@ O `README.md` do repositório `lumora` mistura a arquitetura pretendida com a im
 | Assunto | `README.md` | Código atual |
 | --- | --- | --- |
 | Capacidade do DynamoDB | Provisionada, 1 RCU e 1 WCU | Sob demanda |
-| Buckets | Três: `web`, `originals`, `media` | Um, para originais e derivados |
-| Layout das chaves no S3 | `originals/...`, `thumbs/...`, `previews/...` | Tudo sob `photos/{ownerId}/{eventId}/{galleryId}/{photoId}/` |
-| CloudFront | Distribui o frontend e a mídia | Ausente |
-| Marca d'água | Preview com marca d'água | Ausente |
-| Funções Lambda | Sete | Três |
-| Onde ficam as regras | `packages/domain` | `services/api/src/domain` e `application` |
+| Índices | `GSI1` e, depois, `GSI2` esparso | Só o `GSI1` |
+| Buckets | Três: `web`, `originals`, `media` | Dois: `PhotosBucket` para os originais e `MediaBucket` para os derivados. Não há bucket `web` |
+| Layout das chaves no S3 | `originals/...`, `thumbs/...`, `previews/...` | Tudo sob `photos/{ownerId}/{eventId}/{galleryId}/{photoId}/`, nos dois buckets |
+| CloudFront | Distribui o frontend e a mídia | Distribui só a mídia |
+| Funções Lambda | Sete, incluindo `paymentWebhook` e `paymentReconciler` | Sete, mas outras: no lugar das duas de pagamento há `deletePhotosGallery` e `eventDeletionReconciler` |
 | Ambientes | `dev` e `prod` | Só `dev` |
-| Perfil AWS | `photos-dev` | `lumora-dev` |
+| Perfil AWS | `photos-dev` na lista de pré-requisitos | `lumora-dev` |
 | Segredos | SSM Parameter Store | Não há segredos nem SSM no código |
-| Decisão D17, exclusão de evento | Status "Proposta" | Implementada na API |
-| Comandos | `pnpm process:local`, Playwright, scripts de evento | Não existem |
-| Layer do sharp | `layers/sharp` | `infra/layers/sharp` |
+| Comandos | `pnpm process:local` sobre `fixtures/`; testes de ponta a ponta com Playwright | O comando existe, mas a pasta `fixtures/` e o Playwright não |
 | Memória do processador | 1.536 a 2.048 MB | 1.536 MB |
 | Checklist e plano | `docs/checklist-execucao.xlsx`, `docs/plano-execucao.pdf` | Não estão versionados no repositório |
 

@@ -18,7 +18,7 @@ A API precisa saber quem é o chamador em toda rota, de forma que esse dado não
 
 - Usar um **Cognito User Pool**, com e-mail como login, para guardar credenciais e emitir tokens.
 - Validar o token no **JWT authorizer nativo** da HTTP API, antes de invocar a Lambda.
-- Exigir o **access token**, por meio do scope `aws.cognito.signin.user.admin`, em todas as rotas, exceto `GET /health`.
+- Exigir o **access token**, por meio do scope `aws.cognito.signin.user.admin`, em todas as rotas do fotógrafo, exceto `GET /health`.
 - Usar o claim **`sub`** como identificador do fotógrafo em todo o backend, sem gerar um id próprio.
 - Criar o perfil da aplicação por um gatilho `PostConfirmation`, com um endpoint de bootstrap como reserva.
 
@@ -40,4 +40,4 @@ A API precisa saber quem é o chamador em toda rota, de forma que esse dado não
 
 ## O que esta decisão não cobre
 
-O `README.md` prevê, na mesma decisão D8, o acesso de clientes sem conta, por um token de galeria validado por um Lambda authorizer. Essa parte não está implementada e não faz parte deste ADR.
+O `README.md` prevê, na mesma decisão D8, o acesso de clientes sem conta, por um token de galeria validado por um Lambda authorizer. Isso foi implementado com o nome de link do cliente e **não faz parte deste ADR**: o token vai no header `x-access-token`, as rotas são `/public/*` e o authorizer é o `public-access-authorizer`. Veja [Acesso público do cliente](/developers/flows/public-client-access).

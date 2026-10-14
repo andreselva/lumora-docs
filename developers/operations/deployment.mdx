@@ -33,7 +33,7 @@ sam deploy --config-env dev
 | Comando | O que faz |
 | --- | --- |
 | `sam validate --lint` | Valida o template. |
-| `sam build` | Empacota as três funções com o esbuild e constrói a layer do sharp. |
+| `sam build` | Empacota as sete funções com o esbuild e constrói a layer do sharp. |
 | `sam deploy` | Cria um changeset no CloudFormation, pede confirmação e aplica. |
 
 ### O que o build faz
@@ -55,18 +55,23 @@ Equivale a `sam sync --watch --config-env dev`. O SAM observa os arquivos e publ
 ## Depois do primeiro deploy
 
 1. Copie as saídas `ApiUrl`, `UserPoolId` e `UserPoolClientId` para `apps/web/.env.development`.
-2. Assine o tópico SNS da saída `PhotoProcessingAlarmTopicArn` para receber o alarme da DLQ. O template não cria assinatura.
+2. Confirme a inscrição por e-mail que o SNS envia ao endereço do parâmetro `AlarmEmail`. Sem a confirmação, os alarmes das DLQs não chegam a ninguém.
 3. Crie um usuário, pela tela de cadastro ou com `pnpm create:test-user`.
 
-## Parâmetro `WebOrigin`
+## Parâmetros
 
-O template tem o parâmetro `WebOrigin`, com valor padrão `http://localhost:5173`. Ele define a origem aceita pelo CORS do bucket de fotos.
+| Parâmetro | Padrão | Observação |
+| --- | --- | --- |
+| `WebOrigin` | `http://localhost:5173` | Origem aceita pelo CORS do bucket de fotos. |
+| `AlarmEmail` | nenhum, é obrigatório | Destinatário dos alarmes das DLQs. O `samconfig.toml` o define para o ambiente `dev`. |
 
-O `samconfig.toml` não sobrescreve esse parâmetro. A stack `dev` aceita uploads apenas a partir do servidor de desenvolvimento local. Para publicar o frontend em outro endereço, informe o parâmetro no deploy.
+O `samconfig.toml` não sobrescreve `WebOrigin`. A stack `dev` aceita uploads apenas a partir do servidor de desenvolvimento local. Para publicar o frontend em outro endereço, informe o parâmetro no deploy.
+
+A `studio-api` também recebe a variável de ambiente `PUBLIC_APP_URL`, fixa em `http://localhost:5173` no template. O link do cliente devolvido pela API usa esse endereço como base.
 
 ## Ordem de publicação de mudanças no fluxo de fotos
 
-A `studio-api` e o `imageProcessor` compartilham o formato do item de foto no DynamoDB. Uma mudança nesse formato precisa das duas funções atualizadas.
+A `studio-api`, o `imageProcessor` e a `DeletePhotosGalleryFunction` compartilham o formato do item de foto no DynamoDB. Uma mudança nesse formato precisa das três funções atualizadas.
 
 O `README.md` do repositório `lumora` registra a regra para esse caso:
 
@@ -74,7 +79,7 @@ O `README.md` do repositório `lumora` registra a regra para esse caso:
 - não misture escritores antigos e novos nem reverta apenas uma delas;
 - aguarde as invocações antigas terminarem, ao menos o timeout de 60 segundos do processador, antes de aceitar novos uploads.
 
-Como as três funções saem do mesmo template, um `sam deploy` atualiza todas no mesmo changeset.
+Como as sete funções saem do mesmo template, um `sam deploy` atualiza todas no mesmo changeset.
 
 ## Frontend
 
@@ -87,7 +92,7 @@ O repositório não define como o frontend é publicado. `pnpm --filter @photos/
 | Job | Etapas |
 | --- | --- |
 | `quality` | lint, verificação de formatação, typecheck, testes, testes com DynamoDB Local e build do frontend |
-| `infra` | verificação do lockfile do npm, `sam validate --lint` e `sam build` |
+| `infra` | `sam validate --lint` e `sam build` |
 
 O CI valida, mas não publica. Ele não tem credenciais AWS.
 
@@ -96,5 +101,6 @@ O CI valida, mas não publica. Ele não tem credenciais AWS.
 - **Nome fixo da tabela.** `lumora-app` é fixo no template. Uma segunda stack na mesma conta e região falha por conflito de nome.
 - **Sem proteção contra exclusão.** A tabela e o bucket não têm `DeletionPolicy` nem `UpdateReplacePolicy`. Excluir a stack, ou alterar uma propriedade que force a substituição do recurso, remove a tabela. Um bucket com objetos impede a exclusão da stack.
 - **Versão do sharp.** A versão no `Makefile` da layer deve ser igual à de `services/api/package.json`.
-- **Rotas em dois lugares.** Uma rota nova precisa ser declarada no template e no `switch` de `studioApi.ts`.
+- **Rotas em dois lugares.** Uma rota nova precisa ser declarada no template e no `switch` do handler: `studioApi.ts` para o fotógrafo, `publicApi.ts` para o cliente.
+- **`PUBLIC_APP_URL` fixo.** O template aponta o link do cliente para `localhost`. Antes de usar o link fora do ambiente local, o valor precisa mudar.
 - **CORS da API.** A API aceita qualquer origem. A proteção das rotas é o JWT, e não a origem.

@@ -19,9 +19,10 @@ O processamento precisa de um ponto que absorva essas rajadas, limite a concorr�
 - O bucket publica `s3:ObjectCreated:Post`, filtrado pelo sufixo `/original.jpeg`, em uma **fila SQS standard**.
 - Uma Lambda dedicada, o `imageProcessor`, consome a fila com **lote de 1** e **concorrência máxima de 30**.
 - A fila tem uma **DLQ**, para onde a mensagem vai depois de 5 recebimentos.
+- A mesma fila recebe os pedidos de reprocessamento publicados pela `studio-api`. Veja [Reprocessamento e mídia](/developers/flows/reprocessing-and-media).
 - O handler usa **resposta parcial de lote** (`ReportBatchItemFailures`).
 - Falhas são classificadas: conteúdo inválido marca a foto como `FAILED` e encerra; qualquer outra falha devolve a mensagem à fila.
-- Um alarme no CloudWatch dispara quando há mensagem visível na DLQ.
+- Um alarme no CloudWatch dispara quando há mensagem visível na DLQ, e notifica por e-mail.
 
 ## Consequências
 

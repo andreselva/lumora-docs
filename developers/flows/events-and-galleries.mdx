@@ -63,11 +63,11 @@ No frontend, `changedEventFields` envia só o que mudou. Em particular, `expires
 
 ## Publicar e arquivar
 
-A entidade `Event` e o `DynamoDbEventRepository` implementam as transições `publish` (`DRAFT` para `PUBLISHED`) e `archive` (`PUBLISHED` para `ARCHIVED`), incluindo o tratamento de repetição como operação sem efeito.
+`POST /events/{eventId}/publish` leva o evento de `DRAFT` para `PUBLISHED` em uma única escrita condicional. Repetir sobre um evento já publicado é uma operação sem efeito, e publicar um evento arquivado responde 409 `EVENT_NOT_PUBLISHABLE`. Não há caminho de volta para `DRAFT`.
 
-<Warning>
-  Essas transições não estão expostas. Não há rota no template, caso de uso nem controle na tela. Atualmente todo evento permanece em `DRAFT`.
-</Warning>
+A transição `archive` (`PUBLISHED` para `ARCHIVED`) existe na entidade e no repositório, mas não está exposta: não há rota nem caso de uso.
+
+A publicação, o pacote do evento e o link do cliente estão em [Pacote, publicação e link do cliente](/developers/flows/event-publishing-and-access-link).
 
 ## Excluir um evento
 
@@ -108,15 +108,14 @@ O nome é o único campo editável. O caso de uso lê a galeria, chama `gallery.
 **Sequência:**
 
 1. O caso de uso lê a galeria e chama `assertCanBeDeleted`, que recusa a principal.
-2. O repositório executa uma transação que exclui a galeria, condicionada a `isDefault = false`, e decrementa `galleryCount`.
+2. Marca a galeria como `DELETING` e publica uma mensagem na fila de exclusão.
+3. Um worker remove as fotos, em páginas, e por fim a galeria e decrementa `galleryCount`, em uma transação condicionada a `isDefault = false`.
 
-A recusa da galeria principal acontece duas vezes: na entidade e na condição da escrita. A segunda protege contra uma corrida entre a leitura e a exclusão.
+A recusa da galeria principal acontece duas vezes: na entidade e na condição da escrita final. A segunda protege contra uma corrida entre a leitura e a exclusão.
 
 **Respostas:** 204 em caso de sucesso, 409 `DEFAULT_GALLERY_NOT_DELETABLE` para a principal, 404 para galeria inexistente.
 
-<Warning>
-  A exclusão de galeria não verifica nem remove as fotos da galeria. Excluir uma galeria com fotos deixaria os itens `PHOTO#` e `FP#` no DynamoDB e os objetos no S3 sem galeria correspondente. Um comentário em `DeleteGallery.ts` registra que a cascata ainda não existe. Atualmente a tela não oferece essa operação, o que limita a exposição a chamadas diretas à API.
-</Warning>
+A exclusão das fotos, a fila e o worker estão em [Exclusão de fotos e galerias](/developers/flows/photo-and-gallery-deletion). Atualmente a tela não oferece essa operação.
 
 ## Conflitos de transação
 
