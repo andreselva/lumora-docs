@@ -3,7 +3,7 @@ title: "Backend"
 description: "Organização do código das Lambdas: handlers, casos de uso, domínio, repositórios, validação, contratos e logging."
 ---
 
-Todo o backend fica em `services/api`. É um único projeto TypeScript que gera sete funções Lambda, uma por arquivo em `src/handlers`. Não há framework web nem contêiner de injeção de dependência.
+Todo o backend fica em `services/api`. É um único projeto TypeScript que gera nove funções Lambda, uma por arquivo em `src/handlers`. Não há framework web nem contêiner de injeção de dependência.
 
 ## Camadas
 
@@ -31,10 +31,10 @@ flowchart TD
 | Handlers | `src/handlers` | Ponto de entrada da Lambda. Monta as dependências, roteia e traduz erros em respostas. |
 | Controllers | `src/controllers` | Extraem o `sub` ou o contexto do link do cliente, validam path e body e chamam o caso de uso. |
 | HTTP | `src/http` | Respostas (`ok`, `noContent`, `error`), validação, leitura do `sub`, do contexto de acesso público e dos ids do path. |
-| Casos de uso | `src/application/events`, `galleries`, `photos`, `orders`, `public` | Orquestram uma operação: criam entidades, chamam portas, devolvem DTOs. |
-| Portas | `src/application/ports` | `IPhotoStorage`, `IPublisher` e `IBatchPublisher`, `ITokenGenerator`. |
+| Casos de uso | `src/application/events`, `galleries`, `photos`, `orders`, `customers`, `payment`, `public` | Orquestram uma operação: criam entidades, chamam portas, devolvem DTOs. |
+| Portas | `src/application/ports` | `IPhotoStorage`, `IPublisher` e `IBatchPublisher`, `ITokenGenerator`, `ICheckoutGateway`. |
 | Domínio | `src/domain` | Entidades com suas regras, erros de domínio e as interfaces dos repositórios. |
-| Infraestrutura | `src/infra` | Implementações sobre DynamoDB (`dynamodb`), S3 (`s3`), SQS (`sqs`), sharp (`sharp`) e criptografia (`crypto`). |
+| Infraestrutura | `src/infra` | Implementações sobre DynamoDB (`dynamodb`, uma pasta por área: `event`, `gallery`, `photo`, `photographer`, `order`, `customer`, `payment`, `delivery` e `cursor`), S3 (`s3`), SQS (`sqs`), sharp (`sharp`), criptografia (`crypto`) e gateways de pagamento (`gateways`). |
 | Contratos | `src/contracts` | Schemas zod de entrada e saída e as funções `toXxxDto`. |
 | Compartilhado | `src/shared` | Logger, métricas, erros transversais, `S3KeyBuilder` e `MediaUrlBuilder`. |
 | CLI | `src/cli` | `process:local` e `process:image`, que rodam o processamento de imagem sem a AWS. |
@@ -72,7 +72,13 @@ Todo erro sai no formato `{ code, message, details }`. Erros inesperados são re
 
 ### `publicApi` e `publicAccessAuthorizer`
 
-O `publicApi` atende as rotas `/public/*` do cliente, com o mesmo desenho do `studioApi`: um `switch` sobre `routeKey` e um `try/catch` que traduz erros. Ele não usa o JWT do Cognito. O contexto do `publicAccessAuthorizer` entrega o dono, o evento e o hash do token, e cada operação confere de novo o direito de acesso. Os erros do cliente estão em [Acesso público do cliente](/developers/flows/public-client-access#erros), [Seleção de fotos](/developers/flows/photo-selection) e [Pedidos](/developers/flows/orders).
+O `publicApi` atende as rotas `/public/*` do cliente, com o mesmo desenho do `studioApi`: um `switch` sobre `routeKey` e um `try/catch` que traduz erros. Ele não usa o JWT do Cognito. O contexto do `publicAccessAuthorizer` entrega o dono, o evento e o hash do token, e cada operação confere de novo o direito de acesso. Os erros do cliente estão em [Acesso público do cliente](/developers/flows/public-client-access#erros), [Seleção de fotos](/developers/flows/photo-selection), [Pedidos](/developers/flows/orders) e [Pagamento e entrega](/developers/flows/payment-and-delivery#erros).
+
+### `paymentWebhook` e `fakeCheckout`
+
+`handlers/webhooks/paymentWebhook.ts` atende `POST /webhooks/payments/{gateway}`. Ele não usa authorizer: `ProcessPaymentNotification` confere a assinatura sobre o corpo exato e consulta o gateway antes de gravar. Traduz o resultado para 200 (`APPLIED`, `DUPLICATE`, `UNCHANGED` ou `IGNORED`), 401 (assinatura inválida), 404 (gateway desconhecido) ou 500 (o gateway reenvia).
+
+`handlers/webhooks/fakeCheckout.ts` é o lado "provedor" do gateway fake, só para dev. Veja [Pagamento e entrega](/developers/flows/payment-and-delivery).
 
 ### `imageProcessor`
 
@@ -124,6 +130,10 @@ As rotas do fotógrafo abaixo são atendidas pelo `studioApi`. Todas, exceto `GE
 | `POST /events/{eventId}/galleries/{galleryId}/photos/{photoId}/reprocess` | `RequestPhotoReprocessing` | [Reprocessamento e mídia](/developers/flows/reprocessing-and-media) |
 | `POST /events/{eventId}/photos/reprocess-failures` | `RequestEventFailuresReprocessing` | [Reprocessamento e mídia](/developers/flows/reprocessing-and-media) |
 | `GET /orders` | `ListOrders` | [Pedidos](/developers/flows/orders) |
+| `GET /customers` | `ListCustomers` | [Clientes](/developers/flows/customers) |
+| `POST /customers` | `CreateCustomer` | [Clientes](/developers/flows/customers) |
+| `GET /customers/{customerId}` | `GetCustomer` | [Clientes](/developers/flows/customers) |
+| `PUT /customers/{customerId}` | `UpdateCustomer` | [Clientes](/developers/flows/customers) |
 
 As rotas `/me` e `/me/bootstrap` chamam o repositório diretamente por funções em `src/controllers`, sem caso de uso. São as rotas mais antigas e seguem um formato anterior ao das demais.
 
@@ -168,7 +178,7 @@ O domínio tem cinco agregados, cada um em uma pasta de `src/domain`, além de `
 
 ### Limite entre domínio e infraestrutura
 
-O domínio define **portas**: as interfaces `EventRepository`, `IEventAccessTokenRepository`, `GalleryRepository`, `PhotoRepository`, `PhotographerRepository`, `OrderRepository` e `OrderListRepository`. As implementações em `src/infra/dynamodb` dependem do domínio, e não o contrário.
+O domínio define **portas**: as interfaces `EventRepository`, `IEventAccessTokenRepository`, `GalleryRepository`, `PhotoRepository`, `PhotographerRepository`, `OrderRepository`, `OrderListRepository`, `CustomerRepository`, `IPaymentRepository` e `DeliveryRepository`. As implementações em `src/infra/dynamodb`, numa pasta por área, dependem do domínio, e não o contrário.
 
 Assim, `PhotoRepository` representa o que a aplicação precisa fazer com fotos, como registrar, reivindicar o processamento e marcar como disponível. Como isso vira `TransactWriteItems` ou `UpdateItem` condicional fica isolado em `DynamoDbPhotoRepository`.
 
@@ -187,7 +197,7 @@ A decisão e suas consequências estão no [ADR-004](/developers/adr/004-ports-a
 
 Padrões que se repetem nas implementações DynamoDB:
 
-- **Helpers de chaves.** `infra/dynamodb/keys.ts` reúne os formatos de chave de evento, galeria, foto, fingerprint e dos leases de exclusão. O repositório de perfil e parte do repositório de eventos ainda montam suas chaves diretamente.
+- **Helpers de chaves.** `infra/dynamodb/keys.ts` reúne os formatos de chave de evento, galeria, foto, fingerprint, cliente, pedido, tentativa de pagamento, entrega e dos leases de exclusão. O repositório de perfil e parte do repositório de eventos ainda montam suas chaves diretamente.
 - **Leitura validada.** Itens de evento, galeria e foto passam por schemas zod antes de virar entidades. O repositório de perfil verifica manualmente a presença de `id` e `email`; a contagem de fotos valida o `status` lido.
 - **Leituras consistentes.** Eventos, galerias e fotos usam `ConsistentRead: true`. A leitura de perfil em `GET /me` e a consulta inicial do bootstrap usam `false`. Após perder uma corrida de criação, o bootstrap relê o perfil com consistência forte.
 - **Escritas condicionais.** Criações usam `attribute_not_exists`; alterações e exclusões usam `attribute_exists` mais as condições da regra.
@@ -218,7 +228,7 @@ A fonte conceitual dos contratos é `packages/contracts`, que o frontend importa
 
 A cópia existe porque o build das Lambdas roda o esbuild do SAM com `npm ci` isolado em `services/api`, e ainda não empacota pacotes internos do workspace.
 
-Testes em `tests/` protegem contra divergência: `event-contract-parity.test.ts`, `gallery-contract-parity.test.ts`, `photo-contract-parity.test.ts` e `order-contract-parity.test.ts`. Eles passam as mesmas entradas pelas duas cópias e falham se uma aceitar o que a outra rejeita. O `selection-price-parity.test.ts` faz o mesmo para o cálculo de preço da seleção, que existe no backend e no frontend.
+Testes em `tests/` protegem contra divergência: `event-contract-parity.test.ts`, `gallery-contract-parity.test.ts`, `photo-contract-parity.test.ts`, `order-contract-parity.test.ts`, `customer-contract-parity.test.ts` e `payment-contract-parity.test.ts`. Eles passam as mesmas entradas pelas duas cópias e falham se uma aceitar o que a outra rejeita. O `selection-price-parity.test.ts` faz o mesmo para o cálculo de preço da seleção, que existe no backend e no frontend.
 
 <Warning>
   Ao alterar um contrato, altere as duas cópias na mesma mudança. O enum de status de foto também está duplicado, em `packages/contracts` e em `services/api/src/domain/photo/Photo.ts`.
@@ -234,7 +244,7 @@ A tentativa de processamento usa um UUID aleatório, gerado em `DynamoDbPhotoRep
 
 ## Logging
 
-O log usa o Logger do AWS Lambda Powertools, em `shared/logger.ts`, que emite JSON estruturado. Há quatro instâncias, com `serviceName` `studio-api`, `image-processor`, `delete-photos-gallery-processor` e `event-deletion-reconciler`. O `imageProcessor` também publica métricas, em `shared/metrics.ts`.
+O log usa o Logger do AWS Lambda Powertools, em `shared/logger.ts`, que emite JSON estruturado. Há cinco instâncias, com `serviceName` `studio-api`, `image-processor`, `delete-photos-gallery-processor`, `event-deletion-reconciler` e `payment-webhook`. O `imageProcessor` também publica métricas, em `shared/metrics.ts`.
 
 - A `studio-api` acrescenta `requestId` e `routeKey` a cada log da requisição e os remove no `finally`.
 - O `imageProcessor` acrescenta `messageId` e `senderId` por mensagem. Os logs de erro do processamento trazem `photoId`, `eventId`, `galleryId`, `sourceVersionId`, `processingAttemptId` e `stage`, a etapa em que a falha ocorreu.

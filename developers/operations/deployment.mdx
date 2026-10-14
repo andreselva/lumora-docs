@@ -22,7 +22,15 @@ Atualmente há um único ambiente configurado, `dev`:
 
 ## Publicar
 
-Execute os comandos a partir da pasta `infra`:
+Antes do primeiro deploy numa conta e região, crie o segredo do gateway de pagamento fake. O CloudFormation não cria `SecureString`, então o parâmetro nasce por script, a partir da raiz do repositório:
+
+```bash
+scripts/create-fake-payment-secret.sh
+```
+
+O script usa o perfil e a região do AWS CLI, não imprime o valor e não faz nada se o parâmetro já existe. Sem o parâmetro, a `payment-webhook` e a `fake-checkout` não conseguem ler o segredo.
+
+Execute os comandos a seguir a partir da pasta `infra`:
 
 ```bash
 sam validate --lint
@@ -33,7 +41,7 @@ sam deploy --config-env dev
 | Comando | O que faz |
 | --- | --- |
 | `sam validate --lint` | Valida o template. |
-| `sam build` | Empacota as sete funções com o esbuild e constrói a layer do sharp. |
+| `sam build` | Empacota as nove funções com o esbuild e constrói a layer do sharp. |
 | `sam deploy` | Cria um changeset no CloudFormation, pede confirmação e aplica. |
 
 ### O que o build faz
@@ -62,8 +70,9 @@ Equivale a `sam sync --watch --config-env dev`. O SAM observa os arquivos e publ
 
 | Parâmetro | Padrão | Observação |
 | --- | --- | --- |
-| `WebOrigin` | `http://localhost:5173` | Origem aceita pelo CORS do bucket de fotos. |
+| `WebOrigin` | `http://localhost:5173` | Origem aceita pelo CORS do bucket de fotos. Também é a base de `FAKE_CHECKOUT_URL`, o endereço da página `/dev/fake-checkout` que o gateway fake devolve. |
 | `AlarmEmail` | nenhum, é obrigatório | Destinatário dos alarmes das DLQs. O `samconfig.toml` o define para o ambiente `dev`. |
+| `FakePaymentSecretParameter` | `/lumora/dev/payments/fake/webhook-secret` | Nome do parâmetro `SecureString` do SSM com o segredo que assina as notificações do gateway fake. O template não o cria. |
 
 O `samconfig.toml` não sobrescreve `WebOrigin`. A stack `dev` aceita uploads apenas a partir do servidor de desenvolvimento local. Para publicar o frontend em outro endereço, informe o parâmetro no deploy.
 
@@ -79,7 +88,7 @@ O `README.md` do repositório `lumora` registra a regra para esse caso:
 - não misture escritores antigos e novos nem reverta apenas uma delas;
 - aguarde as invocações antigas terminarem, ao menos o timeout de 60 segundos do processador, antes de aceitar novos uploads.
 
-Como as sete funções saem do mesmo template, um `sam deploy` atualiza todas no mesmo changeset.
+Como as nove funções saem do mesmo template, um `sam deploy` atualiza todas no mesmo changeset.
 
 ## Frontend
 

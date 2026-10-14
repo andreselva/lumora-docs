@@ -25,7 +25,8 @@ Quando esta documentação e o código divergirem, o código prevalece. Corrija 
 | --- | --- |
 | Cadastro e sessão do fotógrafo (Cognito) | Implementado |
 | Perfil do fotógrafo (`/me`, bootstrap) | Implementado |
-| Eventos: criar, listar, ler, editar | Implementado |
+| Eventos: criar, listar, ler, editar | Implementado, com cliente opcional |
+| Clientes do fotógrafo: cadastrar, listar, ler, editar | Implementado. Sem exclusão |
 | Eventos: excluir | Implementado, com limpeza assíncrona de galerias e fotos |
 | Eventos: pacote e publicação | Implementado |
 | Eventos: arquivar | Presente no domínio e no repositório; sem rota e sem tela |
@@ -41,7 +42,9 @@ Quando esta documentação e o código divergirem, o código prevalece. Corrija 
 | Galeria do cliente (`/g/:token`) | Implementado: sessão, galerias e fotos, com authorizer próprio |
 | Seleção de fotos pelo cliente | Implementado, com limite do pacote e exportação para o fotógrafo |
 | Pedidos | Criação e cancelamento pelo cliente, lista para o fotógrafo |
-| Pagamento e entrega dos originais | Não implementado |
+| Pagamento do pedido | Fluxo implementado e testado **só com o gateway fake** de dev: tentativa de pagamento, checkout, webhook assinado e estados `PAID` e `REVIEW`. Sem provedor real e sem reconciliação |
+| Registro da entrega | Implementado: nasce `PENDING` com o pedido pago ou confirmado |
+| Download das fotos entregues | Não implementado: não há upload das tratadas, link de download nem rota |
 
 ## Por onde começar
 
@@ -61,6 +64,12 @@ Quando esta documentação e o código divergirem, o código prevalece. Corrija 
   <Card title="Acesso público do cliente" icon="link" href="/developers/flows/public-client-access">
     Link, authorizer, sessão e fotos do cliente, sem conta.
   </Card>
+  <Card title="Clientes" icon="users" href="/developers/flows/customers">
+    Cadastro de clientes, unicidade e vínculo com o evento.
+  </Card>
+  <Card title="Pagamento e entrega" icon="credit-card" href="/developers/flows/payment-and-delivery">
+    Tentativa de pagamento, webhook, estados do pedido e registro da entrega.
+  </Card>
   <Card title="Decisões arquiteturais" icon="scale-balanced" href="/developers/adr/index">
     O que foi decidido e por quê.
   </Card>
@@ -74,11 +83,11 @@ Quando esta documentação e o código divergirem, o código prevalece. Corrija 
 | Caminho | Conteúdo |
 | --- | --- |
 | `apps/web` | Frontend React (Vite). Área do fotógrafo em `/app/*` e área do cliente em `/g/:token/*`. |
-| `services/api` | Código das sete funções Lambda: handlers, controllers, casos de uso, domínio e infraestrutura. |
+| `services/api` | Código das nove funções Lambda: handlers, controllers, casos de uso, domínio e infraestrutura. |
 | `packages/contracts` | Schemas zod dos contratos HTTP, consumidos pelo frontend. |
 | `infra/template.yaml` | Toda a infraestrutura AWS, em AWS SAM. |
 | `infra/layers/sharp` | Layer com o binário nativo do sharp para Lambda arm64. |
-| `scripts` | DynamoDB Local, criação de usuário de teste e verificação da versão do Node. |
+| `scripts` | DynamoDB Local, criação de usuário de teste, criação do segredo do gateway de pagamento fake no SSM e verificação da versão do Node. |
 | `tests` | Testes de paridade dos contratos e do cálculo de preço, e do template de infraestrutura. |
 | `docs` | Notas internas: design system, guias de engenharia, revisões e validações pontuais. |
 

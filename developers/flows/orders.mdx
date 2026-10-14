@@ -5,7 +5,7 @@ description: "Como a seleção do cliente vira um pedido: congelamento, montagem
 
 O pedido fecha a seleção do cliente. O valor sai do pacote gravado no evento e do número de fotos selecionadas, nunca de algo enviado pelo cliente. A seleção não cabe numa transação (com adicionais à venda não há teto), então o pedido nasce em dois passos: uma transação **congela** a seleção, e uma **montagem** copia os itens aos poucos.
 
-Este fluxo não inclui pagamento. O pedido para em `PENDING_PAYMENT`, e nenhum código o leva adiante. Veja [Limitações](/developers/limitations).
+Este fluxo termina quando o pedido está montado. O pagamento, que leva o pedido de `PENDING_PAYMENT` para `PAID` ou `REVIEW`, e a entrega estão em [Pagamento e entrega](/developers/flows/payment-and-delivery). Hoje o pagamento só roda com um gateway fake de desenvolvimento.
 
 A seleção está em [Seleção de fotos](/developers/flows/photo-selection), e o pacote em [Pacote, publicação e link do cliente](/developers/flows/event-publishing-and-access-link).
 
@@ -14,8 +14,10 @@ A seleção está em [Seleção de fotos](/developers/flows/photo-selection), e 
 | Estado | Significado |
 | --- | --- |
 | `ASSEMBLING` | O pedido congelou a seleção e está copiando os itens. Não tem valor. |
-| `PENDING_PAYMENT` | Montado, com valor a pagar. |
+| `PENDING_PAYMENT` | Montado, com valor a pagar. Sai por pagamento, ou por cancelamento. |
 | `CONFIRMED` | Montado com valor zero. Nasce confirmado, sem passar por gateway. |
+| `PAID` | O gateway confirmou o pagamento com o valor e a moeda do pedido. |
+| `REVIEW` | Houve um pagamento aprovado que não fecha com o pedido (valor ou moeda diferentes, ou pago depois do cancelamento). Espera uma pessoa. |
 | `CANCELED` | O cliente cancelou o pedido que esperava pagamento, ou a montagem terminou sem nenhuma foto. |
 
 ```mermaid
@@ -25,7 +27,12 @@ stateDiagram-v2
   ASSEMBLING --> CONFIRMED: publish (valor = 0)
   ASSEMBLING --> CANCELED: discardEmpty (sem fotos)
   PENDING_PAYMENT --> CANCELED: cancel
+  PENDING_PAYMENT --> PAID: webhook (valor e moeda iguais)
+  PENDING_PAYMENT --> REVIEW: webhook (valor ou moeda diferentes)
+  CANCELED --> REVIEW: webhook (pago depois de cancelar)
 ```
+
+`PAID` e `REVIEW` só nascem do webhook de pagamento. Um pedido pago ou em análise não pode ser cancelado.
 
 Há dois `CANCELED` diferentes. O cancelado pelo cliente foi publicado antes e guarda o valor que tinha, e continua na lista do fotógrafo. O descartado na montagem nunca foi publicado, não tem valor e não entra na lista.
 
@@ -85,7 +92,7 @@ A montagem copia a seleção para itens que pertencem só ao pedido (`ITEM#{asse
 
 1. **Começar.** `startAssembly` grava no pedido uma `assembly` com id novo, a revisão da seleção lida e a lista de galerias **ativas** na ordem da cópia. Uma galeria em exclusão fica de fora, porque está perdendo suas fotos. A escrita só vale se o pedido está `ASSEMBLING` e sem montagem (ou com a montagem que está sendo substituída).
 2. **Copiar páginas.** `copyNextPage` lê a próxima página da seleção da galeria atual, com leitura consistente e até 99 itens, e grava numa única transação: o `Update` do pedido (`galleryIndex`, `after`, `copied`, `step`) e um `Put` por foto. 99 é o limite de 100 itens da transação, descontado o `Update`. Cada item da seleção é conferido contra `ownerId` e `eventId` do pedido.
-3. **Publicar.** Com todas as galerias copiadas, `publish` calcula a cotação sobre `assembly.copied` e grava, numa transação, o status, a `quote` e a posição no GSI1 do fotógrafo.
+3. **Publicar.** Com todas as galerias copiadas, `publish` calcula a cotação sobre `assembly.copied` e grava, numa transação, o status, a `quote` e a posição no GSI1 do fotógrafo. Com valor zero, a mesma transação cria o registro da entrega do pedido `CONFIRMED` e grava `deliveryId` no pedido. Veja [Pagamento e entrega](/developers/flows/payment-and-delivery#a-entrega).
 
 ### Chamadas concorrentes e retomada
 
@@ -118,6 +125,10 @@ A seleção congelada só pode perder fotos. Se a montagem terminar sem nenhuma 
 
 `toPublicOrderDto` devolve `id`, `currency`, `createdAt`, `status` e `quote`. Em `ASSEMBLING`, `quote` é `null`. A resposta não traz dono, evento, retrato do pacote nem montagem.
 
+## Ler o pedido
+
+**Rota:** `GET /public/orders/{orderId}`, pelo link do evento. `GetPublicOrder` só lê: confere o link com `canAccessEvent` antes do pedido e responde com o pedido do evento (montando, montado ou cancelado). A tela do cliente usa essa leitura para acompanhar o pagamento. Pedido de outro evento, inexistente ou descartado na montagem responde 404. Veja [Pagamento e entrega](/developers/flows/payment-and-delivery#tela-do-cliente).
+
 ## Cancelar o pedido
 
 **Rota:** `POST /public/orders/{orderId}/cancel`, sem corpo.
@@ -128,7 +139,7 @@ A seleção congelada só pode perder fotos. Se a montagem terminar sem nenhuma 
 | --- | --- |
 | `PENDING_PAYMENT` | Cancela. |
 | `CANCELED` (pelo cliente) | Devolve o pedido cancelado. Repetir é inofensivo. |
-| `ASSEMBLING`, `CONFIRMED` ou descartado na montagem | 409 `ORDER_NOT_CANCELABLE` |
+| `ASSEMBLING`, `CONFIRMED`, `PAID`, `REVIEW` ou descartado na montagem | 409 `ORDER_NOT_CANCELABLE` |
 
 `cancel` executa uma transação de duas operações:
 
@@ -137,7 +148,7 @@ A seleção congelada só pode perder fotos. Se a montagem terminar sem nenhuma 
 | `Update` do pedido | existe e está `PENDING_PAYMENT` | Status `CANCELED` |
 | `Update` do evento | link dá acesso e `activeOrderId` é este pedido | `REMOVE activeOrderId` |
 
-O valor, os itens e a posição no GSI1 permanecem. A seleção volta a aceitar escritas. **`orderCount` não desce**, então o pacote continua travado depois do primeiro pedido, mesmo cancelado. Se a transação for recusada, o caso de uso relê e decide, até `MAX_CANCEL_ATTEMPTS` (3).
+O valor, os itens e a posição no GSI1 permanecem. A tentativa de pagamento em curso também permanece: se o checkout já aberto for pago depois do cancelamento, o webhook leva o pedido a `REVIEW`. A seleção volta a aceitar escritas. **`orderCount` não desce**, então o pacote continua travado depois do primeiro pedido, mesmo cancelado. Se a transação for recusada, o caso de uso relê e decide, até `MAX_CANCEL_ATTEMPTS` (3).
 
 ## Lista do fotógrafo
 
@@ -149,7 +160,7 @@ O valor, os itens e a posição no GSI1 permanecem. A seleção volta a aceitar 
 - **Nome do evento.** Os nomes da página saem de uma única leitura em lote, um por evento. Se o evento não existe mais, `eventName` é `null`.
 - **Leitura eventual.** O índice não oferece leitura consistente, então um pedido recém-publicado pode levar um instante para aparecer.
 
-No Lumora Studio, `OrdersPage` e `OrderRow` mostram evento e data, fotos, total e estado, somente leitura.
+No Lumora Studio, `OrdersPage` e `OrderRow` mostram evento e data, fotos, total e estado, somente leitura. Os estados aparecem como **Aguardando pagamento**, **Confirmado**, **Pago**, **Em análise** e **Cancelado**.
 
 ## Frontend do cliente
 
@@ -170,6 +181,7 @@ No Lumora Studio, `OrdersPage` e `OrderRow` mostram evento e data, fotos, total 
 | Seleção acima das incluídas sem adicionais à venda | 409 | `SELECTION_LIMIT` |
 | `orderId` pedido já não é o ativo do evento | 409 | `ORDER_NOT_ACTIVE` |
 | Cancelar pedido que não espera pagamento | 409 | `ORDER_NOT_CANCELABLE` |
+| Pagar pedido que não espera pagamento, ou sem cliente no evento | 409 | `ORDER_NOT_PAYABLE`, `CUSTOMER_REQUIRED` (veja [Pagamento e entrega](/developers/flows/payment-and-delivery#erros)) |
 | Pedido de outro evento ou inexistente | 404 | `NOT_FOUND` |
 | Escritas simultâneas esgotaram as tentativas | 409 | `CONFLICT` |
 | `orderId` malformado | 400 | `VALIDATION_ERROR` |
@@ -181,6 +193,6 @@ Continuar o pedido ativo com o link atual do evento não passa por `canAccessEve
 - **Um pedido ativo por evento.** `activeOrderId` é condição de `open`.
 - **O valor não depende do cliente.** O total sai do retrato do pacote e de `assembly.copied`.
 - **Retomável.** Cada página grava junto o ponto de parada. Uma chamada interrompida, ou duas simultâneas, convergem para o mesmo pedido.
-- **Sem pagamento.** O pedido `PENDING_PAYMENT` aguarda um pagamento que nenhum código processa. O pedido de valor zero é o único que chega a `CONFIRMED`.
+- **Pagamento só com gateway fake.** O pedido `PENDING_PAYMENT` é pago pelo fluxo de [Pagamento e entrega](/developers/flows/payment-and-delivery), que hoje só tem o gateway fake. Sem provedor real, nenhum pedido recebe cobrança de verdade. O pedido de valor zero chega a `CONFIRMED` sem gateway.
 - **Pacote travado depois do primeiro pedido.** `orderCount` nunca desce, nem com cancelamento. É deliberado: cada pedido congela os valores da compra, e `EventPackageLockedError` registra isso. Em consequência, a API não altera o pacote de um evento que já teve pedido.
 - **Um pedido por vez.** Depois de cancelar, o cliente pode finalizar a seleção de novo e abrir outro pedido. O fotógrafo vê todos na lista.

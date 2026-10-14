@@ -18,7 +18,7 @@ A exclusão definitiva do evento é um fluxo separado e assíncrono. Ela não ex
 
 ## Criar um evento
 
-**Entrada:** `POST /events`, com `name`, `eventDate` e `expiresAt`.
+**Entrada:** `POST /events`, com `name`, `eventDate` e `expiresAt`, e `customerId` opcional (um [cliente](/developers/flows/customers) já cadastrado).
 
 **Sequência:**
 
@@ -49,7 +49,7 @@ As duas rotas leem só o item do evento. Elas não consultam as fotos, e a respo
 
 ## Editar um evento
 
-**Entrada:** `PATCH /events/{eventId}`, com qualquer subconjunto de `name`, `eventDate` e `expiresAt`. Ao menos um campo é obrigatório.
+**Entrada:** `PATCH /events/{eventId}`, com qualquer subconjunto de `name`, `eventDate`, `expiresAt` e `customerId`. Ao menos um campo é obrigatório. `customerId: null` desfaz o vínculo com o [cliente](/developers/flows/customers#vínculo-com-o-evento); um cliente inexistente responde 404.
 
 **Sequência:** um `UpdateItem` que altera só os campos enviados, condicionado à existência do evento, com `ReturnValues: ALL_NEW`.
 

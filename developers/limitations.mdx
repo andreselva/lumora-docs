@@ -46,7 +46,7 @@ Os itens estão em quatro grupos:
 | Exclusão de fotos e galerias sem reconciliador | Só a exclusão de evento tem reconciliador. Se a cadeia de mensagens de uma galeria se perder, ela permanece em `DELETING` até a operação ser repetida. |
 | `expiresAt` sem efeito | O valor é armazenado e editável. Nenhum código o usa. O acesso do cliente segue o prazo do link, não este campo. |
 | Revogação do link sem escritor | `accessLinkRevokedAt` e `revokedAt` são lidos pelas regras de acesso, mas nenhum código os grava. |
-| Registros de token sem expiração física | Sem TTL na tabela, o registro `PUBLIC_TOKEN#` de um link vencido permanece até a substituição do link ou a exclusão do evento. |
+| Registros de token sem expiração física | O TTL da tabela só limpa as marcas de notificação de pagamento (`WEBHOOK#`). O registro `PUBLIC_TOKEN#` de um link vencido permanece até a substituição do link ou a exclusão do evento. |
 | Edição sem controle de versão | Edições simultâneas de evento ou galeria seguem "a última escrita vence". |
 | Capas | `coverUrl` é aceito pelos schemas do frontend, mas a API não o devolve. |
 | Perfil sem edição | Não há rota para alterar nome ou e-mail. |
@@ -131,12 +131,14 @@ Itens que o código ou os documentos do repositório apontam como evolução pos
 
 ## Funcionalidades planejadas
 
-O roadmap do `README.md` do repositório `lumora` descreve fases que ainda não têm implementação. Marca d'água, entrega por CloudFront, link do cliente, seleção e pedidos já existem; o que falta está abaixo.
+O roadmap do `README.md` do repositório `lumora` descreve fases que ainda não têm implementação. Marca d'água, entrega de mídia por CloudFront, link do cliente, seleção, pedidos e o fluxo de pagamento com gateway fake já existem; o que falta está abaixo.
 
 | Funcionalidade | Estado no código |
 | --- | --- |
-| Pagamento, webhook e reconciliação | Não implementado. O pedido nasce em `PENDING_PAYMENT`, ou `CONFIRMED` quando o valor é zero, mas nada o leva adiante. Não há função de webhook nem de reconciliação. |
-| Download dos originais | Não implementado. |
+| Gateway de pagamento real | Não implementado. O fluxo de pagamento e o webhook existem, mas o único gateway registrado é o `fake` (`PAYMENT_GATEWAY: fake` no template). Nenhum provedor cobra de verdade. |
+| Reconciliação de pagamentos | Não implementada. Se uma notificação se perder, o pedido fica em `PENDING_PAYMENT`, e nenhuma função agendada consulta o gateway. |
+| Estorno e decisão sobre `REVIEW` | Não implementados. Nenhum código tira um pedido de `REVIEW`, nem devolve dinheiro. |
+| Download das fotos entregues | Não implementado. O registro da entrega existe e nasce `PENDING`, mas não há upload das tratadas, link de download nem rota. A regra `canDownload` existe sem chamador. |
 | Arquivamento e classes de armazenamento | Não implementado. |
 | Hospedagem do frontend | Não implementado. |
 | Segundo índice (`GSI2`) para pedidos pendentes | Não implementado. O template só declara o `GSI1`. |
@@ -152,10 +154,10 @@ O `README.md` do repositório `lumora` mistura a arquitetura pretendida com a im
 | Buckets | Três: `web`, `originals`, `media` | Dois: `PhotosBucket` para os originais e `MediaBucket` para os derivados. Não há bucket `web` |
 | Layout das chaves no S3 | `originals/...`, `thumbs/...`, `previews/...` | Tudo sob `photos/{ownerId}/{eventId}/{galleryId}/{photoId}/`, nos dois buckets |
 | CloudFront | Distribui o frontend e a mídia | Distribui só a mídia |
-| Funções Lambda | Sete, incluindo `paymentWebhook` e `paymentReconciler` | Sete, mas outras: no lugar das duas de pagamento há `deletePhotosGallery` e `eventDeletionReconciler` |
+| Funções Lambda | Sete, incluindo `paymentWebhook` e `paymentReconciler` | Nove: `payment-webhook` existe; `paymentReconciler` não. Há ainda `fake-checkout`, `deletePhotosGallery` e `eventDeletionReconciler` |
 | Ambientes | `dev` e `prod` | Só `dev` |
 | Perfil AWS | `photos-dev` na lista de pré-requisitos | `lumora-dev` |
-| Segredos | SSM Parameter Store | Não há segredos nem SSM no código |
+| Segredos | SSM Parameter Store | Um: o segredo do gateway fake, lido do SSM em tempo de execução. O código guarda só o nome do parâmetro |
 | Comandos | `pnpm process:local` sobre `fixtures/`; testes de ponta a ponta com Playwright | O comando existe, mas a pasta `fixtures/` e o Playwright não |
 | Memória do processador | 1.536 a 2.048 MB | 1.536 MB |
 | Checklist e plano | `docs/checklist-execucao.xlsx`, `docs/plano-execucao.pdf` | Não estão versionados no repositório |

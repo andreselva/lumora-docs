@@ -147,6 +147,6 @@ As escritas da área pública repetem essas condições na própria `ConditionEx
 ## Limites atuais
 
 - **Revogação sem escritor.** O modelo prevê `accessLinkRevokedAt` no evento e `revokedAt` no registro do token, gravados quando o pedido é concluído. Hoje nenhum código grava esses campos. A geração de um novo link apenas remove `accessLinkRevokedAt`.
-- **Registros de token sem expiração física.** A tabela não tem TTL. O registro `PUBLIC_TOKEN#` de um link vencido continua no banco até ser substituído por outro link ou até o evento ser excluído.
+- **Registros de token sem expiração física.** O TTL da tabela só limpa as marcas de notificação de pagamento. O registro `PUBLIC_TOKEN#` de um link vencido continua no banco até ser substituído por outro link ou até o evento ser excluído.
 - **`PUBLIC_APP_URL` fixo no template.** O template define `http://localhost:5173` para a `studio-api`. O link devolvido aponta para esse endereço em qualquer stack publicada com o template atual.
 - **Sem arquivamento.** Veja [Arquivar](#arquivar).

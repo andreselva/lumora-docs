@@ -46,7 +46,7 @@ sequenceDiagram
 
 ### Etapas do caso de uso
 
-`ProcessUploadedPhoto`, em `services/api/src/application/photos`, executa as etapas abaixo. O nome entre parênteses é o valor do campo `stage` nos logs de erro.
+`ProcessUploadedPhoto`, em `services/api/src/application/photos/commands`, executa as etapas abaixo. O nome entre parênteses é o valor do campo `stage` nos logs de erro.
 
 1. **Reivindicar** (`claim`). Tenta assumir o processamento da foto para esta versão do objeto. Se não conseguir, encerra sem erro.
 2. **Ler a foto** (`getPhoto`). Obtém o tamanho e o tipo declarados no registro.
@@ -257,7 +257,7 @@ Uma mensagem reprocessada dias depois carrega o mesmo `versionId`. Se a foto ain
 
 ## Derivados
 
-`SharpProcessor`, em `services/api/src/shared/sharp`, gera os dois arquivos.
+`SharpProcessor`, em `services/api/src/infra/sharp`, gera os dois arquivos.
 
 | Derivado | Dimensão | Ajuste | Formato | Qualidade |
 | --- | --- | --- | --- | --- |
@@ -344,9 +344,9 @@ No frontend, o polling desiste após 3 minutos sem mudança e mostra que há fot
 
 | Assunto | Caminho |
 | --- | --- |
-| Consumo da fila | `services/api/src/handlers/imageProcessor.ts` |
-| Orquestração e classificação de falhas | `services/api/src/application/photos/ProcessUploadedPhoto.ts` |
-| Reivindicação e conclusão | `services/api/src/infra/dynamodb/DynamoDbPhotoRepository.ts` |
-| Geração de derivados | `services/api/src/shared/sharp/SharpProcessor.ts` |
+| Consumo da fila | `services/api/src/handlers/sqs/imageProcessor.ts` |
+| Orquestração e classificação de falhas | `services/api/src/application/photos/commands/ProcessUploadedPhoto.ts` |
+| Reivindicação e conclusão | `services/api/src/infra/dynamodb/photo/DynamoDbPhotoRepository.ts` |
+| Geração de derivados | `services/api/src/infra/sharp/SharpProcessor.ts` |
 | Leitura por versão e gravação | `services/api/src/infra/s3/S3PhotoStorage.ts` |
 | Testes de concorrência | `DynamoDbPhotoRepository.dynamodb.spec.ts`, no mesmo diretório do repositório |
