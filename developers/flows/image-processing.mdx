@@ -268,7 +268,7 @@ Características comuns:
 
 - A imagem é rotacionada conforme a orientação EXIF antes do redimensionamento.
 - A saída não carrega os metadados do original. O sharp os descarta por padrão, e o código não pede para mantê-los.
-- `limitInputPixels` de 100 milhões de pixels recusa imagens com dimensões absurdas, uma proteção contra bombas de descompressão.
+- `limitInputPixels` de 160 milhões de pixels recusa imagens com dimensões absurdas, uma proteção contra bombas de descompressão.
 - Os objetos são gravados com `Cache-Control: public, max-age=31536000, immutable`.
 
 ### Uma pasta por tentativa
