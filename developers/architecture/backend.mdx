@@ -100,7 +100,7 @@ Gatilho do Cognito. Cria o perfil do fotógrafo após a confirmação do cadastr
 
 ## Rotas
 
-As rotas do fotógrafo abaixo são atendidas pelo `studioApi`. Todas, exceto `GET /health`, exigem o JWT do Cognito. As rotas `/public/*` são do `publicApi` e estão nas páginas de fluxo do cliente.
+As rotas do fotógrafo abaixo são atendidas pelo `studioApi`. Todas, exceto `GET /health`, exigem o JWT do Cognito. O webhook de pagamento e a `fake-checkout` não passam pelo `studioApi` e também não usam o JWT. As rotas `/public/*` são do `publicApi` e estão nas páginas de fluxo do cliente.
 
 | Método e rota | Caso de uso | Fluxo |
 | --- | --- | --- |

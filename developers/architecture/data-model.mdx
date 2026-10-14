@@ -24,7 +24,7 @@ Há duas famílias de partição:
 - a **partição do fotógrafo**, `USER#{sub}`, com o perfil, os eventos e os tombstones de exclusão de evento;
 - a **partição do evento**, `USER#{sub}#EVENT#{eventId}`, com as galerias, as fotos e as marcas de deduplicação daquele evento.
 
-Quatro tipos de item ficam fora dessas famílias, porque são alcançados por um identificador que não carrega o `sub`: o token do link do cliente, a seleção do cliente e o pedido com seus itens.
+Oito tipos de item ficam fora dessas famílias, porque são alcançados por um identificador que não carrega o `sub`: o token do link do cliente, a seleção do cliente, o pedido com seus itens, a tentativa de pagamento (na partição do pedido), a marca de notificação de pagamento, o pagamento do gateway fake e a entrega.
 
 | Entidade | `PK` | `SK` |
 | --- | --- | --- |

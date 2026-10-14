@@ -90,7 +90,7 @@ O teste `tests/infra-template.test.ts` verifica parte dessas políticas.
 A API é uma HTTP API (v2) com estágio `dev`.
 
 - **Autorização.** Um JWT authorizer nativo valida o token contra o User Pool. Ele é o authorizer padrão e exige o scope `aws.cognito.signin.user.admin`. Cada rota protegida declara o authorizer e o scope explicitamente.
-- **Rota sem credencial.** Somente `GET /health` usa `Authorizer: NONE`.
+- **Rotas sem credencial.** `GET /health` usa `Authorizer: NONE`, assim como `POST /webhooks/payments/{gateway}` e as duas rotas `/dev/fake-checkout/{paymentId}`. O webhook se protege pela assinatura do provedor; as rotas do fake não têm proteção própria.
 - **Rotas do cliente.** As rotas `/public/*` usam o `PublicAccessAuthorizer`, um Lambda authorizer que lê o header `x-access-token`, com resposta em cache por token por 60 segundos. Cada uma declara limite de 20 requisições por segundo, com rajada de 40. Veja [Acesso público do cliente](/developers/flows/public-client-access).
 - **Rotas de pagamento.** `POST /public/payment/{orderId}` e `GET /public/orders/{orderId}` seguem o `PublicAccessAuthorizer`, com 20 requisições por segundo e rajada de 40. `POST /webhooks/payments/{gateway}` não tem authorizer e tem o mesmo limite: quem prova a origem é a assinatura do provedor. As rotas `/dev/fake-checkout/{paymentId}` também não têm authorizer e limitam em 5 por segundo, rajada de 10. Veja [Pagamento e entrega](/developers/flows/payment-and-delivery).
 - **CORS.** A API aceita qualquer origem, com os headers `Content-Type`, `Authorization`, `x-access-token` e `x-fake-signature`. O último existe para a página de checkout fake entregar no webhook a notificação assinada.
