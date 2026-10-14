@@ -45,7 +45,7 @@ A divisão existe por causa do cache. A resposta do authorizer fica em cache por
 
 ### O authorizer
 
-`publicAccessAuthorizer` é um Lambda authorizer com resposta simples (`EnableSimpleResponses`). A identidade é o header `x-access-token`.
+`publicAccessAuthorizer` é um Lambda authorizer com resposta simples (`EnableSimpleResponses`). A identidade é o header `x-access-token`. Sem ele, o API Gateway responde 401 e nem invoca o authorizer.
 
 1. `ValidateEventAccessToken` confere o formato com a expressão `^[A-Za-z0-9_-]{43}$`.
 2. Calcula o SHA-256 do token e lê `PUBLIC_TOKEN#{hash}` / `PUBLIC_GALLERY`.
@@ -140,7 +140,8 @@ Cada rota `/public/*` declara `RouteSettings` no template: 20 requisições por 
 
 | Situação | Status | `code` |
 | --- | --- | --- |
-| Header ausente, token malformado ou desconhecido | 403 do gateway | — |
+| Header `x-access-token` ausente | 401 do gateway, sem invocar o authorizer | — |
+| Token malformado ou desconhecido | 403 do gateway, depois de o authorizer responder `isAuthorized: false` | — |
 | Contexto do authorizer ausente | 401 | `UNAUTHENTICATED` |
 | Link vencido, revogado ou substituído, ou evento fora de `PUBLISHED` | 403 | `ACCESS_DENIED` |
 | Galeria de outro evento, inexistente ou em exclusão | 404 | `NOT_FOUND` |
