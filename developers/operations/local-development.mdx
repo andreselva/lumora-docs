@@ -128,7 +128,14 @@ pnpm process:local <entrada> <saída>
 pnpm process:image <foto.jpg>
 ```
 
-Os dois comandos rodam o mesmo núcleo de processamento da Lambda sobre arquivos locais, sem fila nem S3. `process:local` trata uma pasta e grava miniatura, preview e um arquivo de resultados. `process:image` trata uma foto. A preview recebe a marca d'água do Lumora, e `process:local` aceita `--no-watermark` ou `--watermark <arquivo>`. Veja [Reprocessamento e mídia](/developers/flows/reprocessing-and-media).
+Os dois comandos rodam o mesmo núcleo de processamento da Lambda sobre arquivos locais, sem fila nem S3. `process:local` trata uma pasta e grava miniatura, preview e um arquivo de resultados. `process:image` trata uma foto. Os dois diferem na marca d'água da preview:
+
+| Comando | Marca d'água na preview |
+| --- | --- |
+| `process:local` | A marca do Lumora, como na Lambda. `--no-watermark` gera a preview limpa, e `--watermark <arquivo>` usa outra marca. |
+| `process:image` | Nenhuma por padrão, porque usa a configuração padrão do processador. `--watermark <marca.png>` aplica uma marca. |
+
+Portanto `pnpm process:image foto.jpg` gera uma preview sem a marca e não equivale à saída da Lambda. Veja [Reprocessamento e mídia](/developers/flows/reprocessing-and-media).
 
 ## Usuário de teste
 
