@@ -12,7 +12,7 @@ O fluxo precisa produzir o resultado certo mesmo quando a mesma mensagem chega d
 ## Por que o processamento é assíncrono
 
 - **O upload não espera.** Decodificar e redimensionar um JPEG de dezenas de megabytes leva segundos. O navegador envia centenas de arquivos sem depender disso.
-- **A API não toca nos bytes.** A `studio-api` tem 256 MB e 10 segundos. O processamento roda em outra função, dimensionada para imagens.
+- **A API não toca nos bytes.** A `studio-api` tem 256 MB. O processamento roda em outra função, dimensionada para imagens.
 - **A chegada é confirmada por quem recebeu.** O evento parte do S3, não do navegador. Um cliente não consegue declarar uma foto como enviada.
 - **Falhas são absorvidas pela fila.** Uma falha passageira vira reentrega, sem ação do usuário.
 
@@ -46,7 +46,7 @@ sequenceDiagram
 
 ### Etapas do caso de uso
 
-`ProcessUploadedPhoto`, em `services/api/src/application/photos`, executa as etapas abaixo. O nome entre parênteses é o valor do campo `stage` nos logs de erro.
+`ProcessUploadedPhoto`, em `services/api/src/application/photos/commands`, executa as etapas abaixo. O nome entre parênteses é o valor do campo `stage` nos logs de erro.
 
 1. **Reivindicar** (`claim`). Tenta assumir o processamento da foto para esta versão do objeto. Se não conseguir, encerra sem erro.
 2. **Ler a foto** (`getPhoto`). Obtém o tamanho e o tipo declarados no registro.
@@ -252,23 +252,23 @@ Vale também para a ordem inversa: a primeira versão a reivindicar vence, seja 
 Uma mensagem reprocessada dias depois carrega o mesmo `versionId`. Se a foto ainda está em `PROCESSING` com essa versão e o lease venceu, a reivindicação pode ser aceita. Para concluir o processamento, a versão fixada ainda precisa existir no S3.
 
 <Warning>
-  A retenção de 14 dias da DLQ não garante a preservação do original. O redrive reinicia a retenção da mensagem, mas não o prazo de expiração de 15 dias da versão não corrente no S3. Redrives sucessivos podem manter a mensagem depois de a versão ter sido removida. Antes de retomar, confira a existência de `sourceVersionId`. A reinicialização da retenção é descrita na [documentação do SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-configure-dead-letter-queue-redrive.html).
+  A retenção de 14 dias da DLQ não garante a preservação do original. O redrive reinicia a retenção da mensagem, mas não o prazo de expiração de 14 dias da versão não corrente no S3. Redrives sucessivos podem manter a mensagem depois de a versão ter sido removida. Antes de retomar, confira a existência de `sourceVersionId`. A reinicialização da retenção é descrita na [documentação do SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-configure-dead-letter-queue-redrive.html).
 </Warning>
 
 ## Derivados
 
-`SharpProcessor`, em `services/api/src/shared/sharp`, gera os dois arquivos.
+`SharpProcessor`, em `services/api/src/infra/sharp`, gera os dois arquivos.
 
 | Derivado | Dimensão | Ajuste | Formato | Qualidade |
 | --- | --- | --- | --- | --- |
-| Miniatura | 400 × 400 | `cover`: preenche o quadrado, cortando o excedente | WebP | 75 |
+| Miniatura | até 600 × 600 | `inside`: cabe no quadrado, sem cortar | WebP | 75 |
 | Preview | até 1920 × 1920 | `inside`: cabe no quadrado, sem cortar | WebP | 80 |
 
 Características comuns:
 
 - A imagem é rotacionada conforme a orientação EXIF antes do redimensionamento.
 - A saída não carrega os metadados do original. O sharp os descarta por padrão, e o código não pede para mantê-los.
-- `limitInputPixels` de 100 milhões de pixels recusa imagens com dimensões absurdas, uma proteção contra bombas de descompressão.
+- `limitInputPixels` de 160 milhões de pixels recusa imagens com dimensões absurdas, uma proteção contra bombas de descompressão.
 - Os objetos são gravados com `Cache-Control: public, max-age=31536000, immutable`.
 
 ### Uma pasta por tentativa
@@ -280,7 +280,7 @@ Como o caminho inclui o `attemptId`, duas tentativas nunca gravam no mesmo objet
 O sufixo `-v1` no nome dos arquivos vem de `IMAGE_PROCESSING_VERSION`. Ele identifica a versão das regras de geração, e não a tentativa.
 
 <Note>
-  Atualmente apenas a miniatura é servida, pela listagem de fotos da galeria. A preview é gerada e gravada, mas nenhuma rota a expõe. Não há marca d'água.
+  A miniatura e a preview são servidas por URLs públicas da distribuição de mídia, e a preview recebe marca d'água. Veja [Reprocessamento e mídia](/developers/flows/reprocessing-and-media).
 </Note>
 
 ## Erros e recuperação
@@ -299,7 +299,7 @@ O conteúdo não pode produzir derivados válidos, e repetir não mudaria o resu
 | Formato real diferente de JPEG | `SharpProcessor.validateJpeg` |
 | Falha do sharp ao redimensionar | `SharpProcessor.process` |
 
-**Tratamento:** a foto é marcada como `FAILED` pela tentativa que a detém, o caso de uso registra um aviso e retorna sem erro. A mensagem é confirmada. Não há nova tentativa.
+**Tratamento:** a foto é marcada como `FAILED` pela tentativa que a detém, o caso de uso registra um aviso e retorna sem erro. A mensagem é confirmada. Não há nova tentativa automática. O fotógrafo pode pedir um reprocessamento, que reaproveita o mesmo original; veja [Reprocessamento e mídia](/developers/flows/reprocessing-and-media).
 
 Se a própria gravação de `FAILED` falhar, o erro é propagado e a mensagem volta para a fila.
 
@@ -344,9 +344,9 @@ No frontend, o polling desiste após 3 minutos sem mudança e mostra que há fot
 
 | Assunto | Caminho |
 | --- | --- |
-| Consumo da fila | `services/api/src/handlers/imageProcessor.ts` |
-| Orquestração e classificação de falhas | `services/api/src/application/photos/ProcessUploadedPhoto.ts` |
-| Reivindicação e conclusão | `services/api/src/repositories/dynamodb/DynamoDbPhotoRepository.ts` |
-| Geração de derivados | `services/api/src/shared/sharp/SharpProcessor.ts` |
-| Leitura por versão e gravação | `services/api/src/repositories/s3/S3PhotoStorage.ts` |
+| Consumo da fila | `services/api/src/handlers/sqs/imageProcessor.ts` |
+| Orquestração e classificação de falhas | `services/api/src/application/photos/commands/ProcessUploadedPhoto.ts` |
+| Reivindicação e conclusão | `services/api/src/infra/dynamodb/photo/DynamoDbPhotoRepository.ts` |
+| Geração de derivados | `services/api/src/infra/sharp/SharpProcessor.ts` |
+| Leitura por versão e gravação | `services/api/src/infra/s3/S3PhotoStorage.ts` |
 | Testes de concorrência | `DynamoDbPhotoRepository.dynamodb.spec.ts`, no mesmo diretório do repositório |

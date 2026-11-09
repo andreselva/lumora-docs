@@ -1,0 +1,42 @@
+---
+title: "Entregas e downloads"
+description: "Como o Studio anexa fotos editadas e como o cliente baixa os arquivos."
+---
+
+A entrega nasce em `PENDING` para um pedido confirmado sem cobrança ou pago. As fotos editadas são arquivos da entrega, separados dos originais e derivados da galeria. O número de fotos selecionadas orienta o fotógrafo. A entrega exige pelo menos um arquivo confirmado.
+
+## Rotas do Studio
+
+| Rota | Função |
+| --- | --- |
+| `GET /deliveries` | Lista as entregas do fotógrafo pelo `GSI1`, com paginação. |
+| `GET /deliveries/{deliveryId}` | Lê a entrega e seus arquivos. |
+| `POST /deliveries/{deliveryId}/uploads` | Emite presigned POST para até 20 JPEGs de até 50 MiB cada. |
+| `POST /deliveries/{deliveryId}/files` | Confirma um upload e anexa o arquivo à entrega. |
+| `DELETE /deliveries/{deliveryId}/files/{fileId}` | Remove um arquivo da entrega. |
+| `POST /deliveries/{deliveryId}/deliver` | Marca a entrega como `DELIVERED` e gera um link com validade de 1 a 10 dias. |
+
+O navegador envia direto ao `DeliveriesBucket`, sob `uploads/`. Na confirmação, o backend copia o objeto para `files/` e registra a referência no DynamoDB. A credencial de upload não alcança esse prefixo definitivo. Repetir uma confirmação bem-sucedida devolve o arquivo já registrado. A troca usa o `replacesUploadId` para identificar o arquivo autorizado. Uma alteração concorrente pode retornar `409 FILE_CHANGED`.
+
+## Acesso do cliente
+
+O Studio recebe o endereço `/d/{token}` quando gera o link. O backend guarda o hash e o prazo. Gerar outro link substitui o anterior. A entrega continua acessível pelo próprio link mesmo se o evento for excluído, enquanto a entrega estiver publicada e o link atual estiver no prazo.
+
+O `DeliveryAccessAuthorizer` lê `x-delivery-token` e mantém o resultado em cache por 60 segundos. Cada rota relê a entrega para conferir estado, prazo e hash atual.
+
+| Rota | Função |
+| --- | --- |
+| `GET /public/delivery` | Lê os dados públicos da entrega. |
+| `GET /public/delivery/files` | Lista os arquivos com paginação. |
+| `POST /public/delivery/download-urls` | Emite URLs assinadas do CloudFront para até 20 arquivos da entrega. |
+
+As URLs individuais expiram em até 10 minutos, limitadas pelo prazo restante da entrega. Uma URL já emitida mantém sua própria validade. O navegador baixa os bytes direto do CloudFront, que lê o bucket privado por OAC. Em **Baixar todas**, o navegador solicita URLs conforme avança e pode montar o ZIP localmente, conforme os recursos disponíveis.
+
+## Onde está no código
+
+| Assunto | Caminho |
+| --- | --- |
+| Upload, confirmação e publicação | `services/api/src/application/deliveries` |
+| Acesso e assinatura | `services/api/src/application/deliveries/download` e `services/api/src/handlers/api/publicDeliveryApi.ts` |
+| Persistência | `services/api/src/infra/dynamodb/delivery/DynamoDbDeliveryRepository.ts` |
+| Download no navegador | `apps/web/src/public/delivery/downloadFiles.ts` |
