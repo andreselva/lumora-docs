@@ -1,100 +1,40 @@
 ---
 title: "Implantação"
-description: "Como a stack do Lumora é construída e publicada com AWS SAM, e o que ainda não está automatizado."
+description: "Como publicar desenvolvimento e aprovar uma implantação em produção."
 ---
-
-A infraestrutura e o backend são publicados juntos, com AWS SAM, a partir de `infra/template.yaml`. O `infra/samconfig.toml` guarda os parâmetros de cada ambiente.
 
 ## Ambientes
 
-Atualmente há um único ambiente configurado, `dev`:
+`infra/samconfig.toml` define `dev` e `prod` em `us-east-1`. Use contas distintas para as stacks, pois a tabela tem nome fixo na conta e região. Em ambos os ambientes, o SAM empacota as Lambdas e a layer do sharp. O frontend sai de `apps/web/dist` para um bucket privado atrás do CloudFront.
 
-| Parâmetro | Valor |
-| --- | --- |
-| Nome da stack | `lumora-dev` |
-| Região | `us-east-1` |
-| Perfil AWS | `lumora-dev` |
-| Confirmação do changeset | Exigida a cada deploy |
+## Desenvolvimento
 
-<Note>
-  Não há ambiente de produção no `samconfig.toml`, e não há pipeline de deploy. A publicação é manual, a partir da máquina do desenvolvedor.
-</Note>
+**Deploy dev** publica alterações em `main` que correspondem aos filtros do workflow e aceita execução manual. O workflow usa OIDC, executa o deploy SAM, lê os outputs da stack para configurar o build Vite e publica o site no S3. Depois invalida o cache do CloudFront.
 
-## Publicar
+Para iterar contra uma stack de desenvolvimento, use `pnpm dev:cloud`. O gateway fake, quando habilitado, precisa do segredo de webhook no SSM. O script `scripts/create-fake-payment-secret.sh` provisiona esse parâmetro usando o perfil e região do AWS CLI.
 
-Execute os comandos a partir da pasta `infra`:
+## Produção
 
-```bash
-sam validate --lint
-sam build
-sam deploy --config-env dev
-```
+1. O **CI** valida a `main`. Após uma execução bem-sucedida, **Plan production** prepara um Change Set e publica um resumo com o commit e as alterações propostas.
+2. Revise o resumo e o Change Set. Confira as substituições de recursos, em especial DynamoDB, S3, Cognito, IAM e CloudFront.
+3. Para aprovar, abra **Actions → Deploy production → Run workflow** na `main`. Informe o Run ID do plano revisado e confirme com `DEPLOY`.
+4. O workflow confere a execução do plano e o SHA da `main`, aplica o mesmo Change Set e publica o frontend daquele commit. Depois invalida o CloudFront e executa verificações HTTP básicas.
 
-| Comando | O que faz |
-| --- | --- |
-| `sam validate --lint` | Valida o template. |
-| `sam build` | Empacota as três funções com o esbuild e constrói a layer do sharp. |
-| `sam deploy` | Cria um changeset no CloudFormation, pede confirmação e aplica. |
+Se a `main` avançar, revise um novo plano. Um plano sem alterações de infraestrutura pode aprovar a publicação do frontend. Se a publicação do frontend falhar após o Change Set, a infraestrutura já terá avançado. Inspecione o ponto de falha antes de repetir.
 
-### O que o build faz
+## Pré-requisitos de produção
 
-Cada função tem um `Metadata` com `BuildMethod: esbuild`, que gera um bundle minificado, com sourcemap, a partir do seu handler. `UseNpmCi` faz o SAM instalar as dependências com `npm ci` em `services/api`.
+- Configure as roles de OIDC do GitHub Actions e de execução do CloudFormation. A primeira planeja, executa e publica o frontend. A segunda gerencia os recursos da stack.
+- Compare as políticas em `infra/iam` com as políticas efetivamente anexadas na AWS. Alterar os JSONs no GitHub por si só não altera o IAM. A configuração de access logs exige que a role do CloudFormation tenha as permissões de logs correspondentes antes da execução do Change Set.
+- Disponibilize o par de assinatura do CloudFront no SSM. `DeliverySigningKeyParameter` referencia a chave privada e `DeliverySigningPublicKeyParameter` referencia a chave pública. A API de entregas lê a chave privada em execução.
+- Confirme a assinatura do e-mail de alarmes no SNS. Valide `WebhookBaseUrl` e o cadastro no provedor antes de testar cobrança real. O gateway fake fica desativado em produção.
 
-O esbuild precisa estar no `PATH`. O CI acrescenta `services/api/node_modules/.bin` ao `PATH` antes do build.
+Em produção, o template usa a origem do CloudFront do frontend para a API e para os links públicos. Em desenvolvimento, `WebOrigin` define a base dos links e a origem principal aceita pelos buckets de upload. `SecondaryWebOrigin` pode adicionar uma origem ao CORS desses buckets.
 
-A `SharpLayer` é construída pelo `Makefile` em `infra/layers/sharp`, que instala o sharp para linux arm64. O `imageProcessor` declara o sharp como `External`, de modo que ele fica fora do bundle e vem da layer.
+## CI e validação
 
-## Desenvolver contra a stack
+O CI executa lint, formatação, typecheck, testes unitários e de integração com DynamoDB Local, build do frontend e validação SAM. Os testes Playwright ficam disponíveis localmente por `pnpm test:e2e`.
 
-```bash
-pnpm dev:cloud
-```
+Depois de publicar, verifique a saúde da API, o frontend, a sessão e os fluxos afetados. Para mudanças no pipeline de imagens, mantenha compatibilidade entre API, workers, itens persistidos e mensagens em trânsito. Uma atualização CloudFormation pode colocar funções de versões diferentes em execução por um intervalo.
 
-Equivale a `sam sync --watch --config-env dev`. O SAM observa os arquivos e publica as mudanças na stack `dev` sem um deploy completo.
-
-## Depois do primeiro deploy
-
-1. Copie as saídas `ApiUrl`, `UserPoolId` e `UserPoolClientId` para `apps/web/.env.development`.
-2. Assine o tópico SNS da saída `PhotoProcessingAlarmTopicArn` para receber o alarme da DLQ. O template não cria assinatura.
-3. Crie um usuário, pela tela de cadastro ou com `pnpm create:test-user`.
-
-## Parâmetro `WebOrigin`
-
-O template tem o parâmetro `WebOrigin`, com valor padrão `http://localhost:5173`. Ele define a origem aceita pelo CORS do bucket de fotos.
-
-O `samconfig.toml` não sobrescreve esse parâmetro. A stack `dev` aceita uploads apenas a partir do servidor de desenvolvimento local. Para publicar o frontend em outro endereço, informe o parâmetro no deploy.
-
-## Ordem de publicação de mudanças no fluxo de fotos
-
-A `studio-api` e o `imageProcessor` compartilham o formato do item de foto no DynamoDB. Uma mudança nesse formato precisa das duas funções atualizadas.
-
-O `README.md` do repositório `lumora` registra a regra para esse caso:
-
-- publique as duas funções de forma coordenada;
-- não misture escritores antigos e novos nem reverta apenas uma delas;
-- aguarde as invocações antigas terminarem, ao menos o timeout de 60 segundos do processador, antes de aceitar novos uploads.
-
-Como as três funções saem do mesmo template, um `sam deploy` atualiza todas no mesmo changeset.
-
-## Frontend
-
-O repositório não define como o frontend é publicado. `pnpm --filter @photos/web build` gera os arquivos estáticos em `apps/web/dist`, e o CI executa esse build, mas não há bucket de site, distribuição nem etapa de publicação.
-
-## Integração contínua
-
-`.github/workflows/ci.yml` executa, em cada push para `main` e em cada pull request:
-
-| Job | Etapas |
-| --- | --- |
-| `quality` | lint, verificação de formatação, typecheck, testes, testes com DynamoDB Local e build do frontend |
-| `infra` | verificação do lockfile do npm, `sam validate --lint` e `sam build` |
-
-O CI valida, mas não publica. Ele não tem credenciais AWS.
-
-## Riscos a conhecer antes de publicar
-
-- **Nome fixo da tabela.** `lumora-app` é fixo no template. Uma segunda stack na mesma conta e região falha por conflito de nome.
-- **Sem proteção contra exclusão.** A tabela e o bucket não têm `DeletionPolicy` nem `UpdateReplacePolicy`. Excluir a stack, ou alterar uma propriedade que force a substituição do recurso, remove a tabela. Um bucket com objetos impede a exclusão da stack.
-- **Versão do sharp.** A versão no `Makefile` da layer deve ser igual à de `services/api/package.json`.
-- **Rotas em dois lugares.** Uma rota nova precisa ser declarada no template e no `switch` de `studioApi.ts`.
-- **CORS da API.** A API aceita qualquer origem. A proteção das rotas é o JWT, e não a origem.
+Veja [Observabilidade](/developers/operations/observability) para verificar logs e alarmes.

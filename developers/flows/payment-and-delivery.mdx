@@ -1,0 +1,51 @@
+---
+title: "Pagamentos"
+description: "Como o Lumora abre o checkout, valida notificações e reconcilia pedidos."
+---
+
+O cliente fecha a seleção e gera um [pedido](/developers/flows/orders). Um pedido sem valor a cobrar fica `CONFIRMED`. Um pedido com valor a cobrar fica `PENDING_PAYMENT` e abre um checkout quando o cliente decide pagar. Um pedido confirmado sem cobrança ou marcado como `PAID` inicia uma [entrega](/developers/flows/deliveries).
+
+## Gateway do fotógrafo
+
+O Studio permite cadastrar e editar integrações Getnet, escolher o ambiente do provedor e configurar o webhook. O DynamoDB guarda os metadados do cadastro e a referência ao segredo. As credenciais ficam no SSM Parameter Store. O ambiente do cadastro determina o endpoint do provedor. A integração depende de credenciais aceitas e validação no ambiente correspondente.
+
+Se a configuração do webhook ficar pendente, o Studio permite retomar a operação com credenciais atualizadas. O cadastro mantém a operação pendente separada da configuração efetiva enquanto o provedor responde.
+
+O gateway fake é habilitado por configuração apenas em desenvolvimento. Ele mantém os pagamentos simulados na tabela e usa uma tela própria de checkout. A notificação do fake usa HMAC.
+
+## Abrir o checkout
+
+1. `POST /public/payment/{orderId}` valida o link atual, o acesso ao pedido e seu estado. Uma nova tentativa exige um cliente válido vinculado ao evento.
+2. `CreatePaymentOrder` reutiliza a tentativa ativa ou abre uma nova com o gateway padrão do fotógrafo. A gravação condicional protege contra cliques concorrentes. O limite é de dez tentativas por pedido. Uma tentativa aberta continua vinculada ao cadastro que a criou, mesmo que o padrão mude.
+3. `CreateCheckout` obtém e registra o checkout pelo adapter. Para Getnet, o cliente segue para o checkout hospedado. O retorno do navegador serve para retomar a tela do pedido. A tela consulta `GET /public/orders/{orderId}` para acompanhar o estado.
+
+## Webhook
+
+A Getnet chama `POST /webhooks/payments/{provider}/{ownerId}/{gatewayId}`. A função carrega o cadastro indicado pelo endereço e verifica o Basic Auth. Durante uma operação de configuração pendente, a verificação aceita tanto a credencial efetiva quanto a da operação, se existirem. O fake usa a rota separada `POST /webhooks/payments/fake`.
+
+A notificação identifica o pagamento. O backend consulta o provedor para obter o estado, valor e moeda e confere se a tentativa pertence ao cadastro e ao pedido esperados. `ApplyGatewayPayment` aplica a transição com condições sobre o estado lido. A transação inclui a marca de deduplicação do webhook quando há uma transição a gravar. Repetir uma notificação ou observar um estado já aplicado preserva o resultado anterior.
+
+| Resultado | Efeito no pedido |
+| --- | --- |
+| Pagamento aceito e compatível com o pedido | O pedido vai para `PAID` e a transação cria a entrega. |
+| Pagamento que diverge do esperado ou chega depois do cancelamento ou da expiração | O pedido vai para `REVIEW`, conforme a regra de transição. |
+| Tentativa encerrada sem cobrança | O cliente pode tentar novamente enquanto o pedido estiver pagável e houver tentativas disponíveis. |
+
+## Conciliação e verificação pelo Studio
+
+A função `paymentReconciler` roda a cada duas horas. Ela lê os pedidos pendentes pelo `GSI2` esparso e chama `ReconcileOrder`. A rodada examina até 1.000 pedidos, em páginas de 100, e salva o cursor se atingir o teto ou se restarem menos de 30 segundos. Ao chegar ao fim do índice, a próxima rodada volta aos pedidos mais antigos. Um erro em um pedido não interrompe os demais.
+
+No Studio, **Verificar pagamento** chama `POST /orders/{orderId}/check` para consultar um pedido do fotógrafo. A verificação e a rodada agendada compartilham a regra de transição com o webhook. Pedidos pagos ou em análise saem do índice. Um pedido expirado cuja tentativa ainda pode ser concluída pelo provedor pode continuar no índice durante a janela de pagamento atrasado.
+
+A expiração libera a seleção. A conciliação pode expirar o pedido a partir de 24 horas da criação se não houver tentativa em curso. Se houver uma tentativa em curso, pode expirar a partir de 48 horas e continuar consultando até o encerramento dela ou até sete dias após esse limite. A mudança depende de uma rodada de conciliação e do estado observado.
+
+A gestão de estorno e a resolução de `REVIEW` estão entre as [limitações](/developers/limitations). Para investigar uma divergência, consulte [Solução de problemas](/developers/operations/troubleshooting#pagamento).
+
+## Onde está no código
+
+| Assunto | Caminho em `services/api/src` |
+| --- | --- |
+| Criação da tentativa e checkout | `application/payment/CreatePaymentOrder.ts` e `application/payment/CreateCheckout.ts` |
+| Verificação e aplicação do webhook | `handlers/webhooks/paymentWebhook.ts`, `application/payment/ProcessPaymentNotification.ts` e `application/payment/ApplyGatewayPayment.ts` |
+| Conciliação | `handlers/schedule/paymentReconciler.ts` e `application/payment/ReconcilePendingPayments.ts` |
+| Provedores | `infra/gateways/GatewayFactory.ts` e `infra/gateways/Getnet` |

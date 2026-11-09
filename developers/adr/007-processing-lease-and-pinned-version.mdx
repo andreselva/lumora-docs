@@ -65,7 +65,7 @@ Os pontos abaixo registram trade-offs, invariantes e riscos que devem ser preser
 
 **Riscos e custos associados**
 
-- O versionamento do bucket aumenta o armazenamento. Uma regra de lifecycle remove versões não correntes após 15 dias, inclusive uma versão fixada pelo processador. Redrives reiniciam a retenção das mensagens, mas não esse prazo. Veja [Redrive da DLQ](/developers/flows/image-processing#redrive-da-dlq).
+- O versionamento do bucket aumenta o armazenamento. Uma regra de lifecycle remove versões não correntes após 14 dias, inclusive uma versão fixada pelo processador. Redrives reiniciam a retenção das mensagens, mas não esse prazo. Veja [Redrive da DLQ](/developers/flows/image-processing#redrive-da-dlq).
 - Se o processamento futuro puder legitimamente ultrapassar o lease atual, o desenho sem renovação deixa de ser suficiente e precisa ser revisto antes de aumentar o timeout da Lambda.
 
 ## Implantação
